@@ -1,4 +1,4 @@
-from scripts.lib.asr_utils import fmt_ts, parse_vtt
+from scripts.lib.asr_utils import fmt_ts, parse_vtt, derive_output_dir
 
 def test_fmt_ts_under_hour():
     assert fmt_ts(0) == "00:00"
@@ -11,3 +11,7 @@ def test_fmt_ts_over_hour():
 def test_parse_vtt_basic():
     vtt = "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nHello\n\n00:01:05.000 --> 00:01:07.000\nworld\nagain\n"
     assert parse_vtt(vtt) == [(1, "Hello"), (65, "world again")]
+
+def test_derive_output_dir_sanitizes():
+    assert derive_output_dir("douyin", "abc123", "video-out") == "video-out/douyin-abc123"
+    assert derive_output_dir("You/Tube", "a b*c", "out") == "out/You_Tube-a_b_c"

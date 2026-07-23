@@ -24,3 +24,9 @@ def parse_vtt(text: str) -> list[tuple[int, str]]:
     if start is not None and buf:
         segs.append((start, " ".join(buf)))
     return segs
+
+def _sane(s: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_-]", "_", s)
+
+def derive_output_dir(extractor: str, video_id: str, root: str) -> str:
+    return f"{root}/{_sane(extractor)}-{_sane(video_id)}"
