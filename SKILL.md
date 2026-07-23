@@ -17,7 +17,7 @@ description: >-
   summarize youtube video, get subtitles.
 metadata:
   version: 0.1.0
-  homepage: https://github.com/CHANGE_ME/video-anything
+  homepage: https://github.com/wangzan101/video-anything
 ---
 
 # Video Anything — 基于视频的一切
