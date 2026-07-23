@@ -1,4 +1,4 @@
-from scripts.lib.asr_utils import fmt_ts, parse_vtt, derive_output_dir
+from scripts.lib.asr_utils import fmt_ts, parse_vtt, derive_output_dir, is_manual_subtitle
 
 def test_fmt_ts_under_hour():
     assert fmt_ts(0) == "00:00"
@@ -15,3 +15,8 @@ def test_parse_vtt_basic():
 def test_derive_output_dir_sanitizes():
     assert derive_output_dir("douyin", "abc123", "video-out") == "video-out/douyin-abc123"
     assert derive_output_dir("You/Tube", "a b*c", "out") == "out/You_Tube-a_b_c"
+
+def test_is_manual_subtitle():
+    assert is_manual_subtitle("sub.zh-Hans.vtt") is True
+    assert is_manual_subtitle("sub.en-auto.vtt") is False
+    assert is_manual_subtitle("sub.en.auto.vtt") is False

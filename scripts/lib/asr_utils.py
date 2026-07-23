@@ -30,3 +30,7 @@ def _sane(s: str) -> str:
 
 def derive_output_dir(extractor: str, video_id: str, root: str) -> str:
     return f"{root}/{_sane(extractor)}-{_sane(video_id)}"
+
+def is_manual_subtitle(filename: str) -> bool:
+    low = filename.lower()
+    return not (".auto." in low or "-auto." in low)
