@@ -1,43 +1,40 @@
 #!/usr/bin/env python3
-"""transcribe.py — local speech-to-text for the video-anything skill.
+"""transcribe.py — speech-to-text for the video-anything skill.
 
 Usage:
-    python3 scripts/transcribe.py <AUDIO_OR_VIDEO> [--model small] [--lang auto] [--out DIR]
+    python3 scripts/transcribe.py <AUDIO_OR_VIDEO> [--engine local|cloud]
+                                   [--model small] [--lang auto] [--out DIR]
 
 Writes, next to the input (or into --out):
     transcript.md   (with [mm:ss] timestamps)
     transcript.txt  (plain text)
 
-Engine preference:
-    1) faster-whisper (pip install faster-whisper)  — fast, no API key
-    2) openai-whisper CLI ("whisper" on PATH)        — fallback
-
-No external API / key is ever used. Everything runs locally.
+Engine selection (--engine, default "local"):
+    local  - runs fully on-device, no network/API key ever used.
+             1) faster-whisper (pip install faster-whisper) — fast, no key
+             2) openai-whisper CLI ("whisper" on PATH) — fallback
+    cloud  - NOT implemented in M1. This is an explicit-opt-in placeholder:
+             selecting it prints a message and exits non-zero. It never runs
+             just because GROQ_API_KEY happens to be set (R5: no silent
+             upload of the user's media).
 """
 import argparse
 import os
 import subprocess
 import sys
 
-
-def fmt_ts(seconds: float) -> str:
-    seconds = int(seconds)
-    return f"{seconds // 60:02d}:{seconds % 60:02d}"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # adds scripts/
+from lib.asr_utils import parse_vtt, segments_to_markdown, segments_to_text  # noqa: E402
 
 
 def write_outputs(out_dir: str, segments) -> None:
-    """segments: iterable of (start_seconds, text)."""
+    """segments: list of (start_seconds, text)."""
     md_path = os.path.join(out_dir, "transcript.md")
     txt_path = os.path.join(out_dir, "transcript.txt")
-    with open(md_path, "w", encoding="utf-8") as md, \
-         open(txt_path, "w", encoding="utf-8") as txt:
-        md.write("# Transcript\n\n")
-        for start, text in segments:
-            text = text.strip()
-            if not text:
-                continue
-            md.write(f"`[{fmt_ts(start)}]` {text}\n\n")
-            txt.write(text + "\n")
+    with open(md_path, "w", encoding="utf-8") as md:
+        md.write(segments_to_markdown(segments))
+    with open(txt_path, "w", encoding="utf-8") as txt:
+        txt.write(segments_to_text(segments))
     print(f">> wrote {md_path}")
     print(f">> wrote {txt_path}")
 
@@ -53,17 +50,14 @@ def run_faster_whisper(audio: str, out_dir: str, model: str, lang: str) -> bool:
         audio, language=None if lang == "auto" else lang, vad_filter=True
     )
     print(f">> detected language: {info.language} (p={info.language_probability:.2f})")
-    write_outputs(out_dir, ((s.start, s.text) for s in seg_iter))
+    write_outputs(out_dir, [(s.start, s.text) for s in seg_iter])
     return True
 
 
 def run_whisper_cli(audio: str, out_dir: str, model: str, lang: str) -> bool:
-    exe = None
-    for cand in ("whisper", "whisper-cli"):
-        from shutil import which
-        if which(cand):
-            exe = cand
-            break
+    from shutil import which
+
+    exe = next((cand for cand in ("whisper",) if which(cand)), None)
     if not exe:
         return False
     print(f">> transcribing with {exe} CLI (model={model}) ...")
@@ -71,44 +65,63 @@ def run_whisper_cli(audio: str, out_dir: str, model: str, lang: str) -> bool:
            "--output_format", "vtt"]
     if lang != "auto":
         cmd += ["--language", lang]
-    subprocess.run(cmd, check=True)
+    try:
+        subprocess.run(cmd, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"ERROR: {exe} CLI failed to run ({e}); falling back to "
+              f"'no local ASR engine' diagnostic.", file=sys.stderr)
+        return False
+
     # Parse the produced .vtt into our md/txt format.
     vtt = os.path.join(out_dir, os.path.splitext(os.path.basename(audio))[0] + ".vtt")
     if not os.path.exists(vtt):
-        # openai-whisper names it after the input stem
+        # openai-whisper names it after the input stem; fall back to any .vtt
+        # it wrote into out_dir.
         cands = [f for f in os.listdir(out_dir) if f.endswith(".vtt")]
         vtt = os.path.join(out_dir, cands[0]) if cands else None
-    if vtt and os.path.exists(vtt):
-        write_outputs(out_dir, _parse_vtt(vtt))
+    if not vtt or not os.path.exists(vtt):
+        print(f"ERROR: {exe} ran but produced no .vtt output in {out_dir}",
+              file=sys.stderr)
+        return False
+    with open(vtt, encoding="utf-8") as f:
+        segments = parse_vtt(f.read())
+    write_outputs(out_dir, segments)
     return True
 
 
-def _parse_vtt(path: str):
-    import re
-    segs = []
-    start = None
-    buf = []
-    ts_re = re.compile(r"(\d{2}):(\d{2}):(\d{2})\.\d{3}\s*-->")
-    with open(path, encoding="utf-8") as f:
-        for line in f:
-            line = line.rstrip("\n")
-            m = ts_re.match(line)
-            if m:
-                if start is not None and buf:
-                    segs.append((start, " ".join(buf)))
-                    buf = []
-                h, mnt, s = int(m.group(1)), int(m.group(2)), int(m.group(3))
-                start = h * 3600 + mnt * 60 + s
-            elif line and not line.startswith(("WEBVTT", "NOTE")) and "-->" not in line:
-                buf.append(line)
-    if start is not None and buf:
-        segs.append((start, " ".join(buf)))
-    return segs
+def run_local(audio: str, out_dir: str, model: str, lang: str) -> int:
+    if run_faster_whisper(audio, out_dir, model, lang):
+        return 0
+    if run_whisper_cli(audio, out_dir, model, lang):
+        return 0
+    print(
+        "ERROR: no local ASR engine found. Install one:\n"
+        "  pip install faster-whisper      (recommended)\n"
+        "  pip install openai-whisper      (provides whisper)\n"
+        "See scripts/bootstrap.sh for other dependency setup.",
+        file=sys.stderr,
+    )
+    return 1
+
+
+def run_cloud() -> int:
+    # M1 stub: cloud transcription is not implemented yet (see M3). This must
+    # never run implicitly off the presence of GROQ_API_KEY — --engine cloud
+    # is the only opt-in, and even then it is a no-op placeholder for now.
+    print(
+        "云引擎将在 M3 实装,当前请用默认 --engine local。\n"
+        "(Cloud engine is not implemented in M1; use --engine local.)",
+        file=sys.stderr,
+    )
+    return 1
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("input", help="audio or video file")
+    ap.add_argument("--engine", choices=("local", "cloud"), default="local",
+                    help="transcription engine (default local; cloud is an "
+                         "M1 stub, see --help notes)")
     ap.add_argument("--model", default="small",
                     help="whisper model: tiny/base/small/medium/large (default small)")
     ap.add_argument("--lang", default="auto",
@@ -116,20 +129,16 @@ def main() -> int:
     ap.add_argument("--out", default=None, help="output dir (default: input's dir)")
     args = ap.parse_args()
 
+    if args.engine == "cloud":
+        return run_cloud()
+
     if not os.path.exists(args.input):
         print(f"ERROR: no such file: {args.input}", file=sys.stderr)
         return 2
     out_dir = args.out or os.path.dirname(os.path.abspath(args.input))
     os.makedirs(out_dir, exist_ok=True)
 
-    if run_faster_whisper(args.input, out_dir, args.model, args.lang):
-        return 0
-    if run_whisper_cli(args.input, out_dir, args.model, args.lang):
-        return 0
-    print("ERROR: no ASR engine found. Install one:\n"
-          "  pip install faster-whisper      (recommended)\n"
-          "  brew install whisper-cpp        (or)\n", file=sys.stderr)
-    return 1
+    return run_local(args.input, out_dir, args.model, args.lang)
 
 
 if __name__ == "__main__":

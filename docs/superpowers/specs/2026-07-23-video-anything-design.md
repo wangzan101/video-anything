@@ -54,7 +54,7 @@ video-anything/
 **原则**: 用户不手动安装任何东西。skill 首次调用时自我就位到私有目录 `~/.video-anything/`,不污染系统。**bootstrap 是本项目最脆、最需硬化的组件**(R2),按下列硬需求实现:
 
 - **yt-dlp**: 从**官方 GitHub release** 下对应平台单文件二进制(`yt-dlp_macos` / `yt-dlp_linux` / `yt-dlp.exe`,~30MB),**校验官方 SHA256SUMS**(R3)→ `~/.video-anything/bin/`。保留 `yt-dlp -U` 自更新。
-- **ffmpeg**(R2): 官方**不发**静态单文件,按 OS×arch 从固定第三方源取(mac→evermeet、linux→johnvansickle/BtbN、win→BtbN),**钉版本 + 校验哈希**;取不到或校验失败则**回退系统已装 ffmpeg**(多数环境已有,如本机 8.1)。ffmpeg 就位单列为高风险项,冒烟必测。
+- **ffmpeg**(R2): **优先用系统已装 ffmpeg**(多数环境已有,如本机 8.1)→ symlink 进私有 bin;系统没有才按 OS×arch 从第三方源取(mac→evermeet、linux→johnvansickle)。**跟各源的「最新稳定」通道 + 尽力校验**——硬编码 ffmpeg 版本号会像 yt-dlp 占位一样过期 404,且 mac evermeet 无官方 SHA256,故 mac 用「字节数 + 运行时冒烟」尽力校验、linux 用其官方 md5;取不到/校验失败则明确报错提示手动装。ffmpeg 就位单列为高风险项,冒烟必测(回退分支需无-ffmpeg 干净环境验,见 §10)。
 - **ASR 引擎**(R1): **不假设 `pip install faster-whisper` 一定成功**(如本机 Python 3.14,ctranslate2 可能无 wheel)。就位顺序:
   1. 探测系统已有 `whisper` / `whisper-cli`(本机 `/opt/homebrew/bin/whisper` 即可用)→ 直接用;
   2. 否则用**钉定的兼容 Python(3.11/3.12)**建私有 venv 装 faster-whisper;
