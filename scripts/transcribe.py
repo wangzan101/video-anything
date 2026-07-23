@@ -19,12 +19,21 @@ Engine selection (--engine, default "local"):
              upload of the user's media).
 """
 import argparse
+import glob
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
+from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # adds scripts/
-from lib.asr_utils import parse_vtt, segments_to_markdown, segments_to_text  # noqa: E402
+from lib.asr_utils import (  # noqa: E402
+    is_manual_subtitle,
+    parse_vtt,
+    segments_to_markdown,
+    segments_to_text,
+)
 
 
 def write_outputs(out_dir: str, segments) -> None:
@@ -61,32 +70,43 @@ def run_whisper_cli(audio: str, out_dir: str, model: str, lang: str) -> bool:
     if not exe:
         return False
     print(f">> transcribing with {exe} CLI (model={model}) ...")
-    cmd = [exe, audio, "--model", model, "--output_dir", out_dir,
-           "--output_format", "vtt"]
-    if lang != "auto":
-        cmd += ["--language", lang]
+    # Write whisper's own output into an isolated temp dir rather than
+    # out_dir directly. out_dir may already contain a platform-downloaded
+    # subtitle (e.g. sub.en.vtt from fetch.sh); if whisper's expected
+    # <stem>.vtt were missing, a same-directory "any .vtt" fallback could
+    # silently pick up that unrelated file (latent bug C). A private temp
+    # dir guarantees the only .vtt files present are whisper's own.
+    tmp_dir = tempfile.mkdtemp(prefix="va-whisper-")
     try:
-        subprocess.run(cmd, check=True)
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        print(f"ERROR: {exe} CLI failed to run ({e}); falling back to "
-              f"'no local ASR engine' diagnostic.", file=sys.stderr)
-        return False
+        cmd = [exe, audio, "--model", model, "--output_dir", tmp_dir,
+               "--output_format", "vtt"]
+        if lang != "auto":
+            cmd += ["--language", lang]
+        try:
+            subprocess.run(cmd, check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            print(f"ERROR: {exe} CLI failed to run ({e}); falling back to "
+                  f"'no local ASR engine' diagnostic.", file=sys.stderr)
+            return False
 
-    # Parse the produced .vtt into our md/txt format.
-    vtt = os.path.join(out_dir, os.path.splitext(os.path.basename(audio))[0] + ".vtt")
-    if not os.path.exists(vtt):
-        # openai-whisper names it after the input stem; fall back to any .vtt
-        # it wrote into out_dir.
-        cands = [f for f in os.listdir(out_dir) if f.endswith(".vtt")]
-        vtt = os.path.join(out_dir, cands[0]) if cands else None
-    if not vtt or not os.path.exists(vtt):
-        print(f"ERROR: {exe} ran but produced no .vtt output in {out_dir}",
-              file=sys.stderr)
-        return False
-    with open(vtt, encoding="utf-8") as f:
-        segments = parse_vtt(f.read())
-    write_outputs(out_dir, segments)
-    return True
+        # Parse the produced .vtt into our md/txt format.
+        vtt = os.path.join(tmp_dir, os.path.splitext(os.path.basename(audio))[0] + ".vtt")
+        if not os.path.exists(vtt):
+            # openai-whisper names it after the input stem; fall back to any
+            # .vtt in tmp_dir — safe because tmp_dir only ever holds files
+            # this whisper invocation just produced.
+            cands = [f for f in os.listdir(tmp_dir) if f.endswith(".vtt")]
+            vtt = os.path.join(tmp_dir, cands[0]) if cands else None
+        if not vtt or not os.path.exists(vtt):
+            print(f"ERROR: {exe} ran but produced no .vtt output (checked {tmp_dir})",
+                  file=sys.stderr)
+            return False
+        with open(vtt, encoding="utf-8") as f:
+            segments = parse_vtt(f.read())
+        write_outputs(out_dir, segments)
+        return True
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def run_local(audio: str, out_dir: str, model: str, lang: str) -> int:
@@ -104,6 +124,45 @@ def run_local(audio: str, out_dir: str, model: str, lang: str) -> int:
     return 1
 
 
+def maybe_reexec_into_va_home_venv() -> None:
+    """If bootstrap installed faster-whisper into $VA_HOME/venv but we're
+    currently running under a different python3 (one that can't import it),
+    re-exec this script under that venv's interpreter so ASR engine
+    detection here matches what scripts/check.sh reported as ready
+    (latent bug E). VA_REEXEC guards against re-exec looping; this is a
+    no-op when the venv doesn't exist (e.g. this machine)."""
+    if os.environ.get("VA_REEXEC") == "1":
+        return
+    va_home = os.environ.get("VA_HOME") or os.path.expanduser("~/.video-anything")
+    venv_python = os.path.join(va_home, "venv", "bin", "python")
+    if not os.path.exists(venv_python):
+        return
+    if os.path.realpath(sys.executable) == os.path.realpath(venv_python):
+        return
+    probe = subprocess.run(
+        [venv_python, "-c", "import faster_whisper"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    if probe.returncode != 0:
+        return
+    env = os.environ.copy()
+    env["VA_REEXEC"] = "1"
+    os.execve(venv_python, [venv_python, os.path.abspath(__file__)] + sys.argv[1:], env)
+
+
+def find_manual_subtitle(audio_dir: str) -> Optional[str]:
+    """Return the path to a human-authored sub.*.vtt in audio_dir, or None.
+
+    Only files matching sub.*.vtt AND passing is_manual_subtitle() qualify —
+    auto-generated platform captions (sub.*-auto.vtt / sub.*.auto.vtt) are
+    excluded so --prefer-subs never mistakes machine subs for human ones.
+    """
+    for path in sorted(glob.glob(os.path.join(audio_dir, "sub.*.vtt"))):
+        if is_manual_subtitle(os.path.basename(path)):
+            return path
+    return None
+
+
 def run_cloud() -> int:
     # M1 stub: cloud transcription is not implemented yet (see M3). This must
     # never run implicitly off the presence of GROQ_API_KEY — --engine cloud
@@ -117,6 +176,8 @@ def run_cloud() -> int:
 
 
 def main() -> int:
+    maybe_reexec_into_va_home_venv()
+
     ap = argparse.ArgumentParser()
     ap.add_argument("input", help="audio or video file")
     ap.add_argument("--engine", choices=("local", "cloud"), default="local",
@@ -127,6 +188,10 @@ def main() -> int:
     ap.add_argument("--lang", default="auto",
                     help="language code (e.g. zh, en) or 'auto' (default auto)")
     ap.add_argument("--out", default=None, help="output dir (default: input's dir)")
+    ap.add_argument("--prefer-subs", action=argparse.BooleanOptionalAction, default=True,
+                    help="if a human-authored subtitle (sub.*.vtt, not "
+                         "auto-generated) sits next to the audio, use it "
+                         "directly and skip ASR entirely (default: on)")
     args = ap.parse_args()
 
     if args.engine == "cloud":
@@ -137,6 +202,17 @@ def main() -> int:
         return 2
     out_dir = args.out or os.path.dirname(os.path.abspath(args.input))
     os.makedirs(out_dir, exist_ok=True)
+
+    if args.prefer_subs:
+        audio_dir = os.path.dirname(os.path.abspath(args.input))
+        sub_path = find_manual_subtitle(audio_dir)
+        if sub_path:
+            print(f">> found manual subtitle {sub_path}; using it directly "
+                  f"(skipping ASR). Pass --no-prefer-subs to force ASR.")
+            with open(sub_path, encoding="utf-8") as f:
+                segments = parse_vtt(f.read())
+            write_outputs(out_dir, segments)
+            return 0
 
     return run_local(args.input, out_dir, args.model, args.lang)
 
