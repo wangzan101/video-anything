@@ -87,6 +87,12 @@ if [ ! -f "$DIR/video.mp4" ]; then
   [ -n "$first_vid" ] && mv "$first_vid" "$DIR/video.mp4"
 fi
 
+# Normalize yt-dlp's info-json filename to the contract name info.json
+_ij="$(ls "$DIR"/*.info.json 2>/dev/null | head -1)"
+if [ -n "$_ij" ] && [ "$_ij" != "$DIR/info.json" ]; then
+  mv -f "$_ij" "$DIR/info.json"
+fi
+
 # Extract 16k mono wav for ASR.
 if [ -f "$DIR/video.mp4" ]; then
   echo ">> extracting audio → audio.wav"
