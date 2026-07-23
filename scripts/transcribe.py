@@ -21,8 +21,10 @@ Engine selection (--engine, default "local"):
 import argparse
 import glob
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # adds scripts/
@@ -68,32 +70,43 @@ def run_whisper_cli(audio: str, out_dir: str, model: str, lang: str) -> bool:
     if not exe:
         return False
     print(f">> transcribing with {exe} CLI (model={model}) ...")
-    cmd = [exe, audio, "--model", model, "--output_dir", out_dir,
-           "--output_format", "vtt"]
-    if lang != "auto":
-        cmd += ["--language", lang]
+    # Write whisper's own output into an isolated temp dir rather than
+    # out_dir directly. out_dir may already contain a platform-downloaded
+    # subtitle (e.g. sub.en.vtt from fetch.sh); if whisper's expected
+    # <stem>.vtt were missing, a same-directory "any .vtt" fallback could
+    # silently pick up that unrelated file (latent bug C). A private temp
+    # dir guarantees the only .vtt files present are whisper's own.
+    tmp_dir = tempfile.mkdtemp(prefix="va-whisper-")
     try:
-        subprocess.run(cmd, check=True)
-    except (subprocess.CalledProcessError, FileNotFoundError) as e:
-        print(f"ERROR: {exe} CLI failed to run ({e}); falling back to "
-              f"'no local ASR engine' diagnostic.", file=sys.stderr)
-        return False
+        cmd = [exe, audio, "--model", model, "--output_dir", tmp_dir,
+               "--output_format", "vtt"]
+        if lang != "auto":
+            cmd += ["--language", lang]
+        try:
+            subprocess.run(cmd, check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError) as e:
+            print(f"ERROR: {exe} CLI failed to run ({e}); falling back to "
+                  f"'no local ASR engine' diagnostic.", file=sys.stderr)
+            return False
 
-    # Parse the produced .vtt into our md/txt format.
-    vtt = os.path.join(out_dir, os.path.splitext(os.path.basename(audio))[0] + ".vtt")
-    if not os.path.exists(vtt):
-        # openai-whisper names it after the input stem; fall back to any .vtt
-        # it wrote into out_dir.
-        cands = [f for f in os.listdir(out_dir) if f.endswith(".vtt")]
-        vtt = os.path.join(out_dir, cands[0]) if cands else None
-    if not vtt or not os.path.exists(vtt):
-        print(f"ERROR: {exe} ran but produced no .vtt output in {out_dir}",
-              file=sys.stderr)
-        return False
-    with open(vtt, encoding="utf-8") as f:
-        segments = parse_vtt(f.read())
-    write_outputs(out_dir, segments)
-    return True
+        # Parse the produced .vtt into our md/txt format.
+        vtt = os.path.join(tmp_dir, os.path.splitext(os.path.basename(audio))[0] + ".vtt")
+        if not os.path.exists(vtt):
+            # openai-whisper names it after the input stem; fall back to any
+            # .vtt in tmp_dir — safe because tmp_dir only ever holds files
+            # this whisper invocation just produced.
+            cands = [f for f in os.listdir(tmp_dir) if f.endswith(".vtt")]
+            vtt = os.path.join(tmp_dir, cands[0]) if cands else None
+        if not vtt or not os.path.exists(vtt):
+            print(f"ERROR: {exe} ran but produced no .vtt output (checked {tmp_dir})",
+                  file=sys.stderr)
+            return False
+        with open(vtt, encoding="utf-8") as f:
+            segments = parse_vtt(f.read())
+        write_outputs(out_dir, segments)
+        return True
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 def run_local(audio: str, out_dir: str, model: str, lang: str) -> int:
