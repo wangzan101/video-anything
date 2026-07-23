@@ -12,7 +12,7 @@ Writes, next to the input (or into --out):
 Engine selection (--engine, default "local"):
     local  - runs fully on-device, no network/API key ever used.
              1) faster-whisper (pip install faster-whisper) — fast, no key
-             2) openai-whisper CLI ("whisper"/"whisper-cli" on PATH) — fallback
+             2) openai-whisper CLI ("whisper" on PATH) — fallback
     cloud  - NOT implemented in M1. This is an explicit-opt-in placeholder:
              selecting it prints a message and exits non-zero. It never runs
              just because GROQ_API_KEY happens to be set (R5: no silent
@@ -57,7 +57,7 @@ def run_faster_whisper(audio: str, out_dir: str, model: str, lang: str) -> bool:
 def run_whisper_cli(audio: str, out_dir: str, model: str, lang: str) -> bool:
     from shutil import which
 
-    exe = next((cand for cand in ("whisper", "whisper-cli") if which(cand)), None)
+    exe = next((cand for cand in ("whisper",) if which(cand)), None)
     if not exe:
         return False
     print(f">> transcribing with {exe} CLI (model={model}) ...")
@@ -65,7 +65,12 @@ def run_whisper_cli(audio: str, out_dir: str, model: str, lang: str) -> bool:
            "--output_format", "vtt"]
     if lang != "auto":
         cmd += ["--language", lang]
-    subprocess.run(cmd, check=True)
+    try:
+        subprocess.run(cmd, check=True)
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        print(f"ERROR: {exe} CLI failed to run ({e}); falling back to "
+              f"'no local ASR engine' diagnostic.", file=sys.stderr)
+        return False
 
     # Parse the produced .vtt into our md/txt format.
     vtt = os.path.join(out_dir, os.path.splitext(os.path.basename(audio))[0] + ".vtt")
@@ -92,7 +97,6 @@ def run_local(audio: str, out_dir: str, model: str, lang: str) -> int:
     print(
         "ERROR: no local ASR engine found. Install one:\n"
         "  pip install faster-whisper      (recommended)\n"
-        "  brew install whisper-cpp        (provides whisper-cli)\n"
         "  pip install openai-whisper      (provides whisper)\n"
         "See scripts/bootstrap.sh for other dependency setup.",
         file=sys.stderr,

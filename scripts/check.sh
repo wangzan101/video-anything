@@ -47,21 +47,18 @@ check "ffmpeg"  "ffmpeg -version"   "brew install ffmpeg"
 check "python3" "python3 --version" "install Python 3.9+"
 
 # ---------------------------------------------------------------------------
-# Local ASR — real probe, in priority order:
-#   1. system whisper / whisper-cli CLI
-#   2. faster-whisper inside $VA_HOME/venv
-#   3. whisper.cpp binary ($VA_HOME/bin/whisper-cli or system) — covered by
-#      step 1 since $VA_HOME/bin is already on PATH and whisper-cli is the
-#      whisper.cpp CLI name.
-#   4. none -> cloud engine required
+# Local ASR — real probe, in priority order (must match scripts/transcribe.py):
+#   1. faster-whisper inside $VA_HOME/venv
+#   2. system openai-whisper CLI ("whisper" on PATH)
+#   3. none -> cloud engine required
 # ---------------------------------------------------------------------------
-asr_bin="$(command -v whisper-cli 2>/dev/null || command -v whisper 2>/dev/null || true)"
-if [ -n "$asr_bin" ]; then
-  echo "  ✅ ASR          本地 ASR: 系统 whisper ($asr_bin)"
-elif [ -x "$VA_HOME/venv/bin/python" ] && "$VA_HOME/venv/bin/python" -c "import faster_whisper" >/dev/null 2>&1; then
+asr_bin="$(command -v whisper 2>/dev/null || true)"
+if [ -x "$VA_HOME/venv/bin/python" ] && "$VA_HOME/venv/bin/python" -c "import faster_whisper" >/dev/null 2>&1; then
   echo "  ✅ ASR          本地 ASR: faster-whisper ($VA_HOME/venv)"
+elif [ -n "$asr_bin" ]; then
+  echo "  ✅ ASR          本地 ASR: openai-whisper ($(basename "$asr_bin"))"
 else
-  echo "  ❌ ASR          MISSING — 本地 ASR: 无(云引擎需 --engine cloud); pip install faster-whisper (or: brew install whisper-cpp)"
+  echo "  ❌ ASR          MISSING — 本地 ASR: 无(云引擎需 --engine cloud); pip install faster-whisper (or: pip install openai-whisper)"
   ok=0
 fi
 

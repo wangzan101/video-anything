@@ -8,7 +8,7 @@
 ```bash
 brew install yt-dlp ffmpeg
 pip install faster-whisper        # 推荐的本地 ASR(快、无需 key)
-# 或者:brew install whisper-cpp   # 备选 ASR 引擎
+# 或者:pip install openai-whisper # 备选 ASR 引擎(提供 whisper 命令)
 ```
 
 **其他/通用:**
