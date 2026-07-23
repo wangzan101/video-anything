@@ -34,3 +34,14 @@ def derive_output_dir(extractor: str, video_id: str, root: str) -> str:
 def is_manual_subtitle(filename: str) -> bool:
     low = filename.lower()
     return not (".auto." in low or "-auto." in low)
+
+def segments_to_markdown(segs) -> str:
+    out = ["# Transcript", ""]
+    for start, text in segs:
+        t = text.strip()
+        if t:
+            out.append(f"`[{fmt_ts(start)}]` {t}"); out.append("")
+    return "\n".join(out[:-1]) + "\n" if len(out) > 2 else "# Transcript\n\n"
+
+def segments_to_text(segs) -> str:
+    return "".join(f"{t.strip()}\n" for _, t in segs if t.strip())

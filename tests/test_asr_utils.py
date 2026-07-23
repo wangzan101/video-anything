@@ -1,4 +1,4 @@
-from scripts.lib.asr_utils import fmt_ts, parse_vtt, derive_output_dir, is_manual_subtitle
+from scripts.lib.asr_utils import fmt_ts, parse_vtt, derive_output_dir, is_manual_subtitle, segments_to_markdown, segments_to_text
 
 def test_fmt_ts_under_hour():
     assert fmt_ts(0) == "00:00"
@@ -20,3 +20,8 @@ def test_is_manual_subtitle():
     assert is_manual_subtitle("sub.zh-Hans.vtt") is True
     assert is_manual_subtitle("sub.en-auto.vtt") is False
     assert is_manual_subtitle("sub.en.auto.vtt") is False
+
+def test_segments_render():
+    segs = [(1, "Hello"), (65, "  "), (66, "world")]
+    assert segments_to_markdown(segs) == "# Transcript\n\n`[00:01]` Hello\n\n`[01:06]` world\n"
+    assert segments_to_text(segs) == "Hello\nworld\n"
