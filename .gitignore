@@ -1,0 +1,11 @@
+# runtime outputs
+video-out/
+*.wav
+*.mp4
+*.vtt
+# python
+__pycache__/
+*.pyc
+.venv/
+# os
+.DS_Store
