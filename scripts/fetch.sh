@@ -10,6 +10,9 @@
 #
 # Notes:
 #   - Douyin/Kuaishou generally return the no-watermark source via yt-dlp.
+#   - Douyin share links are short links (v.douyin.com/xxx); yt-dlp follows the
+#     redirect itself, so just pass the short link straight through — do not
+#     pre-resolve it with curl here (stay platform-agnostic).
 #   - For login/region-gated content, add cookies (see references/platforms.md):
 #       export VA_COOKIES_FROM_BROWSER=chrome   # or a cookies.txt path in VA_COOKIES
 set -uo pipefail
