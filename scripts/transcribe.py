@@ -124,6 +124,32 @@ def run_local(audio: str, out_dir: str, model: str, lang: str) -> int:
     return 1
 
 
+def maybe_reexec_into_va_home_venv() -> None:
+    """If bootstrap installed faster-whisper into $VA_HOME/venv but we're
+    currently running under a different python3 (one that can't import it),
+    re-exec this script under that venv's interpreter so ASR engine
+    detection here matches what scripts/check.sh reported as ready
+    (latent bug E). VA_REEXEC guards against re-exec looping; this is a
+    no-op when the venv doesn't exist (e.g. this machine)."""
+    if os.environ.get("VA_REEXEC") == "1":
+        return
+    va_home = os.environ.get("VA_HOME") or os.path.expanduser("~/.video-anything")
+    venv_python = os.path.join(va_home, "venv", "bin", "python")
+    if not os.path.exists(venv_python):
+        return
+    if os.path.realpath(sys.executable) == os.path.realpath(venv_python):
+        return
+    probe = subprocess.run(
+        [venv_python, "-c", "import faster_whisper"],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    if probe.returncode != 0:
+        return
+    env = os.environ.copy()
+    env["VA_REEXEC"] = "1"
+    os.execve(venv_python, [venv_python, os.path.abspath(__file__)] + sys.argv[1:], env)
+
+
 def find_manual_subtitle(audio_dir: str) -> Optional[str]:
     """Return the path to a human-authored sub.*.vtt in audio_dir, or None.
 
@@ -150,6 +176,8 @@ def run_cloud() -> int:
 
 
 def main() -> int:
+    maybe_reexec_into_va_home_venv()
+
     ap = argparse.ArgumentParser()
     ap.add_argument("input", help="audio or video file")
     ap.add_argument("--engine", choices=("local", "cloud"), default="local",
