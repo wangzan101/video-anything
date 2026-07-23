@@ -14,6 +14,13 @@
 #       export VA_COOKIES_FROM_BROWSER=chrome   # or a cookies.txt path in VA_COOKIES
 set -uo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Prefer the private, bootstrap-provisioned binaries over anything on system PATH.
+VA_HOME="${VA_HOME:-$HOME/.video-anything}"
+export PATH="$VA_HOME/bin:$PATH"
+
 URL="${1:-}"
 OUT_ROOT="${2:-./video-out}"
 if [ -z "$URL" ]; then
@@ -22,7 +29,11 @@ if [ -z "$URL" ]; then
 fi
 
 if ! command -v yt-dlp >/dev/null 2>&1; then
-  echo "ERROR: yt-dlp not installed. Run: pipx install yt-dlp   (or brew install yt-dlp)" >&2
+  echo "ERROR: yt-dlp not installed under \$VA_HOME/bin or system PATH. Run: bash scripts/check.sh   (or: bash scripts/bootstrap.sh)" >&2
+  exit 1
+fi
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  echo "ERROR: ffmpeg not installed under \$VA_HOME/bin or system PATH. Run: bash scripts/check.sh   (or: bash scripts/bootstrap.sh)" >&2
   exit 1
 fi
 
@@ -35,7 +46,7 @@ elif [ -n "${VA_COOKIES:-}" ]; then
 fi
 
 # Resolve extractor + id up front so we can name the output dir deterministically.
-meta="$(yt-dlp "${COOKIE_ARGS[@]}" --no-warnings --print "%(extractor)s\t%(id)s" --playlist-items 1 "$URL" 2>/dev/null | head -1)"
+meta="$(yt-dlp "${COOKIE_ARGS[@]+"${COOKIE_ARGS[@]}"}" --no-warnings --print $'%(extractor)s\t%(id)s' --playlist-items 1 "$URL" 2>/dev/null | head -1)"
 extractor="$(printf '%s' "$meta" | cut -f1)"
 vid="$(printf '%s' "$meta" | cut -f2)"
 if [ -z "$extractor" ] || [ -z "$vid" ]; then
@@ -43,11 +54,23 @@ if [ -z "$extractor" ] || [ -z "$vid" ]; then
   exit 1
 fi
 
-DIR="$OUT_ROOT/${extractor}-${vid}"
+# Output directory name is derived by lib.asr_utils.derive_output_dir (DRY —
+# do not reimplement the sanitization logic here in bash). PYTHONPATH (rather
+# than `cd`) points python at the repo root so a relative OUT_ROOT still
+# resolves against the caller's cwd, not the repo root.
+DIR="$(PYTHONPATH="$REPO_ROOT${PYTHONPATH:+:$PYTHONPATH}" python3 -c "
+import sys
+from scripts.lib.asr_utils import derive_output_dir
+print(derive_output_dir(sys.argv[1], sys.argv[2], sys.argv[3]))
+" "$extractor" "$vid" "$OUT_ROOT")"
+if [ -z "$DIR" ]; then
+  echo "ERROR: could not derive output directory via scripts.lib.asr_utils.derive_output_dir" >&2
+  exit 1
+fi
 mkdir -p "$DIR"
 
 echo ">> downloading [$extractor] $vid → $DIR"
-yt-dlp "${COOKIE_ARGS[@]}" \
+yt-dlp "${COOKIE_ARGS[@]+"${COOKIE_ARGS[@]}"}" \
   --no-warnings --no-playlist \
   -f "bv*+ba/b" --merge-output-format mp4 \
   --write-info-json --write-thumbnail \
