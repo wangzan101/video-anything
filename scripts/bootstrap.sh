@@ -80,7 +80,14 @@ else
     echo "ERROR: no checksum entry for '$asset' in SHA2-256SUMS (tag $tag)" >&2
     exit 1
   fi
-  actual="$(shasum -a 256 "$tmp_bin" | awk '{print $1}')"
+  if command -v shasum >/dev/null 2>&1; then
+    actual="$(shasum -a 256 "$tmp_bin" | awk '{print $1}')"
+  elif command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "$tmp_bin" | awk '{print $1}')"
+  else
+    echo "ERROR: neither shasum nor sha256sum is available to verify the yt-dlp download" >&2
+    exit 1
+  fi
   if [ "$expected" != "$actual" ]; then
     echo "ERROR: yt-dlp checksum mismatch for tag '$tag'" >&2
     echo "       expected: $expected" >&2
