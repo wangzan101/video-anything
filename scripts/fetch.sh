@@ -74,7 +74,7 @@ yt-dlp "${COOKIE_ARGS[@]+"${COOKIE_ARGS[@]}"}" \
   --no-warnings --no-playlist \
   -f "bv*+ba/b" --merge-output-format mp4 \
   --write-info-json --write-thumbnail \
-  --write-subs --write-auto-subs --sub-langs "zh-Hans,zh,en" --convert-subs vtt \
+  --write-subs --sub-langs "zh-Hans,zh,en" --convert-subs vtt \
   -o "$DIR/video.%(ext)s" \
   -o "infojson:$DIR/info.%(ext)s" \
   -o "thumbnail:$DIR/thumbnail.%(ext)s" \
