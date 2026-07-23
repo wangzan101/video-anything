@@ -19,12 +19,19 @@ Engine selection (--engine, default "local"):
              upload of the user's media).
 """
 import argparse
+import glob
 import os
 import subprocess
 import sys
+from typing import Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # adds scripts/
-from lib.asr_utils import parse_vtt, segments_to_markdown, segments_to_text  # noqa: E402
+from lib.asr_utils import (  # noqa: E402
+    is_manual_subtitle,
+    parse_vtt,
+    segments_to_markdown,
+    segments_to_text,
+)
 
 
 def write_outputs(out_dir: str, segments) -> None:
@@ -104,6 +111,19 @@ def run_local(audio: str, out_dir: str, model: str, lang: str) -> int:
     return 1
 
 
+def find_manual_subtitle(audio_dir: str) -> Optional[str]:
+    """Return the path to a human-authored sub.*.vtt in audio_dir, or None.
+
+    Only files matching sub.*.vtt AND passing is_manual_subtitle() qualify —
+    auto-generated platform captions (sub.*-auto.vtt / sub.*.auto.vtt) are
+    excluded so --prefer-subs never mistakes machine subs for human ones.
+    """
+    for path in sorted(glob.glob(os.path.join(audio_dir, "sub.*.vtt"))):
+        if is_manual_subtitle(os.path.basename(path)):
+            return path
+    return None
+
+
 def run_cloud() -> int:
     # M1 stub: cloud transcription is not implemented yet (see M3). This must
     # never run implicitly off the presence of GROQ_API_KEY — --engine cloud
@@ -127,6 +147,10 @@ def main() -> int:
     ap.add_argument("--lang", default="auto",
                     help="language code (e.g. zh, en) or 'auto' (default auto)")
     ap.add_argument("--out", default=None, help="output dir (default: input's dir)")
+    ap.add_argument("--prefer-subs", action=argparse.BooleanOptionalAction, default=True,
+                    help="if a human-authored subtitle (sub.*.vtt, not "
+                         "auto-generated) sits next to the audio, use it "
+                         "directly and skip ASR entirely (default: on)")
     args = ap.parse_args()
 
     if args.engine == "cloud":
@@ -137,6 +161,17 @@ def main() -> int:
         return 2
     out_dir = args.out or os.path.dirname(os.path.abspath(args.input))
     os.makedirs(out_dir, exist_ok=True)
+
+    if args.prefer_subs:
+        audio_dir = os.path.dirname(os.path.abspath(args.input))
+        sub_path = find_manual_subtitle(audio_dir)
+        if sub_path:
+            print(f">> found manual subtitle {sub_path}; using it directly "
+                  f"(skipping ASR). Pass --no-prefer-subs to force ASR.")
+            with open(sub_path, encoding="utf-8") as f:
+                segments = parse_vtt(f.read())
+            write_outputs(out_dir, segments)
+            return 0
 
     return run_local(args.input, out_dir, args.model, args.lang)
 
