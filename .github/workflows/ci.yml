@@ -1,0 +1,26 @@
+name: video-download-foundation
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [macos-13, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install media tools
+        run: |
+          if [ "${RUNNER_OS}" = "macOS" ]; then brew install ffmpeg; else sudo apt-get update && sudo apt-get install -y ffmpeg; fi
+      - name: Run offline and local integration tests
+        run: python -m pytest -q
+      - name: Check shell syntax
+        run: bash -n scripts/bootstrap.sh scripts/bootstrap_ffmpeg.sh scripts/check.sh scripts/fetch.sh
+      - name: Check whitespace
+        run: git diff --check
