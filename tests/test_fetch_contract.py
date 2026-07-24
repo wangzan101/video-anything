@@ -14,10 +14,6 @@ FETCH_SCRIPT = REPO_ROOT / "scripts" / "fetch.sh"
 
 
 PHASE0_TEST_MATRIX = [
-    {"test_id": "test_current_behavior_download_failure_still_returns_success", "group": "phase2_core", "acceptance": "A2", "removal_phase": "Phase 2 flip-to-contract"},
-    {"test_id": "test_current_behavior_webm_is_renamed_to_mp4_without_validation", "group": "phase2_core", "acceptance": "A3", "removal_phase": "Phase 2 flip-to-contract"},
-    {"test_id": "test_current_behavior_audio_extraction_failure_is_only_a_warning", "group": "phase2_core", "acceptance": "A4", "removal_phase": "Phase 2 flip-to-contract"},
-    {"test_id": "test_current_behavior_failed_run_pollutes_existing_final_directory", "group": "phase2_core", "acceptance": "A10", "removal_phase": "Phase 3 flip-to-contract"},
     {"test_id": "test_contract_resolve_failure_returns_20_without_creating_final", "group": "phase2_core", "acceptance": "A1", "removal_phase": "Phase 2"},
     {"test_id": "test_contract_download_failure_returns_30_without_stdout_path", "group": "phase2_core", "acceptance": "A2", "removal_phase": "Phase 2"},
     {"test_id": "test_contract_webm_only_input_requires_real_normalization", "group": "phase2_core", "acceptance": "A3", "removal_phase": "Phase 2"},
@@ -90,63 +86,6 @@ def test_phase0_matrix_has_unique_owned_entries() -> None:
     assert len(test_ids) == len(set(test_ids))
 
 
-@pytest.mark.current_behavior
-def test_current_behavior_download_failure_still_returns_success(tmp_path: Path) -> None:
-    completed, _, _, artifact_dir = run_fetch(
-        tmp_path,
-        {"download_exit": 42, "download_stderr": "fake download failed\n"},
-    )
-
-    assert completed.returncode == 0
-    assert artifact_dir.exists()
-    assert stdout_lines(completed.stdout)[-1] == str(artifact_dir)
-
-
-@pytest.mark.current_behavior
-def test_current_behavior_webm_is_renamed_to_mp4_without_validation(tmp_path: Path) -> None:
-    completed, _, _, artifact_dir = run_fetch(
-        tmp_path,
-        {"video_ext": "webm", "video_body": "container=webm\n"},
-    )
-
-    assert completed.returncode == 0
-    assert (artifact_dir / "video.mp4").read_text(encoding="utf-8") == "container=webm\n"
-    assert not (artifact_dir / "video.webm").exists()
-
-
-@pytest.mark.current_behavior
-def test_current_behavior_audio_extraction_failure_is_only_a_warning(tmp_path: Path) -> None:
-    completed, _, _, artifact_dir = run_fetch(
-        tmp_path,
-        {"ffmpeg_exit": 9, "ffmpeg_stderr": "boom\n"},
-    )
-
-    assert completed.returncode == 0
-    assert "WARN: audio extraction failed" in completed.stdout
-    assert not (artifact_dir / "audio.wav").exists()
-
-
-@pytest.mark.current_behavior
-def test_current_behavior_failed_run_pollutes_existing_final_directory(tmp_path: Path) -> None:
-    artifact_dir = tmp_path / "video-out" / "fake-abc123"
-    artifact_dir.mkdir(parents=True, exist_ok=True)
-    sentinel = artifact_dir / "sentinel.txt"
-    sentinel.write_text("keep-me\n", encoding="utf-8")
-    completed, _, _, artifact_dir = run_fetch(
-        tmp_path,
-        {
-            "download_exit": 42,
-            "write_video": True,
-            "video_body": "partial payload\n",
-        },
-    )
-
-    assert completed.returncode == 0
-    assert sentinel.read_text(encoding="utf-8") == "keep-me\n"
-    assert (artifact_dir / "video.mp4").read_text(encoding="utf-8") == "partial payload\n"
-
-
-@owned_xfail("phase2_core", "A1")
 @pytest.mark.phase2_core
 def test_contract_resolve_failure_returns_20_without_creating_final(tmp_path: Path) -> None:
     completed, _, _, artifact = run_fetch(tmp_path, {"resolve_exit": 42, "resolve_stdout": ""})
@@ -155,7 +94,6 @@ def test_contract_resolve_failure_returns_20_without_creating_final(tmp_path: Pa
     assert not artifact.exists()
 
 
-@owned_xfail("phase2_core", "A2")
 @pytest.mark.phase2_core
 def test_contract_download_failure_returns_30_without_stdout_path(tmp_path: Path) -> None:
     completed, _, _, artifact = run_fetch(tmp_path, {"download_exit": 42})
@@ -165,7 +103,6 @@ def test_contract_download_failure_returns_30_without_stdout_path(tmp_path: Path
     assert not artifact.exists()
 
 
-@owned_xfail("phase2_core", "A3")
 @pytest.mark.phase2_core
 def test_contract_webm_only_input_requires_real_normalization(tmp_path: Path) -> None:
     completed, _, _, artifact = run_fetch(tmp_path, {"video_ext": "webm"})
@@ -173,7 +110,6 @@ def test_contract_webm_only_input_requires_real_normalization(tmp_path: Path) ->
     assert not (artifact / "video.mp4").exists()
 
 
-@owned_xfail("phase2_core", "A4")
 @pytest.mark.phase2_core
 def test_contract_audio_extraction_failure_returns_50_without_publish(tmp_path: Path) -> None:
     completed, _, _, artifact = run_fetch(tmp_path, {"ffmpeg_exit": 9})
@@ -181,7 +117,6 @@ def test_contract_audio_extraction_failure_returns_50_without_publish(tmp_path: 
     assert not artifact.exists()
 
 
-@owned_xfail("phase2_core", "A5")
 @pytest.mark.phase2_core
 def test_contract_missing_info_json_returns_50(tmp_path: Path) -> None:
     completed, _, _, artifact = run_fetch(tmp_path, {"write_info": False})
@@ -189,7 +124,6 @@ def test_contract_missing_info_json_returns_50(tmp_path: Path) -> None:
     assert not artifact.exists()
 
 
-@owned_xfail("phase2_core", "A5")
 @pytest.mark.phase2_core
 def test_contract_invalid_info_json_returns_50(tmp_path: Path) -> None:
     completed, _, _, artifact = run_fetch(tmp_path, {"info_body": "not-json\n"})
@@ -197,15 +131,13 @@ def test_contract_invalid_info_json_returns_50(tmp_path: Path) -> None:
     assert not artifact.exists()
 
 
-@owned_xfail("phase2_core", "A6")
 @pytest.mark.phase2_core
 def test_contract_unparseable_video_returns_50(tmp_path: Path) -> None:
-    completed, _, _, artifact = run_fetch(tmp_path, {"ffprobe_exit": 1})
+    completed, _, _, artifact = run_fetch(tmp_path, {"ffprobe_responses": {".mp4": {"exit": 1, "stdout": ""}}})
     assert completed.returncode == 50
     assert not artifact.exists()
 
 
-@owned_xfail("phase2_core", "A6")
 @pytest.mark.phase2_core
 def test_contract_video_without_video_stream_returns_50(tmp_path: Path) -> None:
     no_video = {"format": {"format_name": "mp4", "duration": "10"}, "streams": []}
@@ -217,13 +149,21 @@ def test_contract_video_without_video_stream_returns_50(tmp_path: Path) -> None:
     assert not artifact.exists()
 
 
-@owned_xfail("phase2_core", "A7")
 @pytest.mark.phase2_core
-def test_contract_audio_duration_tolerance_is_enforced() -> None:
-    pytest.fail("Phase 2 must add a black-box duration tolerance fixture: exact threshold passes and threshold+0.01 fails")
+def test_contract_audio_duration_tolerance_is_enforced(tmp_path: Path) -> None:
+    video = {"format": {"format_name": "mp4", "duration": "100"}, "streams": [{"codec_type": "video", "codec_name": "h264", "duration": "100"}, {"codec_type": "audio", "codec_name": "aac", "duration": "100"}]}
+    wav_exact = {"format": {"format_name": "wav", "duration": "101"}, "streams": [{"codec_type": "audio", "codec_name": "pcm_s16le", "sample_rate": "16000", "channels": 1, "duration": "101"}]}
+    completed, _, _, artifact = run_fetch(tmp_path / "exact", {"ffprobe_responses": {".mp4": {"stdout": json.dumps(video)}, ".wav": {"stdout": json.dumps(wav_exact)}}})
+    assert completed.returncode == 0
+    assert (artifact / "manifest.json").exists()
+    wav_over = dict(wav_exact)
+    wav_over["format"] = {"format_name": "wav", "duration": "101.01"}
+    wav_over["streams"] = [dict(wav_exact["streams"][0], duration="101.01")]
+    completed, _, _, artifact = run_fetch(tmp_path / "over", {"ffprobe_responses": {".mp4": {"stdout": json.dumps(video)}, ".wav": {"stdout": json.dumps(wav_over)}}})
+    assert completed.returncode == 50
+    assert not artifact.exists()
 
 
-@owned_xfail("phase2_core", "A8")
 @pytest.mark.phase2_core
 def test_contract_video_without_audio_returns_50_no_audio(tmp_path: Path) -> None:
     video_only = {"format": {"format_name": "mp4", "duration": "10"}, "streams": [{"codec_type": "video", "codec_name": "h264", "duration": "10"}]}
@@ -266,7 +206,6 @@ def test_contract_second_writer_fails_fast_when_lock_is_held() -> None:
     pytest.fail("Phase 3 must fail immediately with artifact_locked when the per-artifact lock exists")
 
 
-@owned_xfail("phase2_core", "A14")
 @pytest.mark.phase2_core
 def test_contract_download_argv_ignores_host_config(tmp_path: Path) -> None:
     completed, harness, _, _ = run_fetch(tmp_path)
@@ -274,7 +213,6 @@ def test_contract_download_argv_ignores_host_config(tmp_path: Path) -> None:
     assert all("--ignore-config" in call["argv"] for call in harness.calls("yt-dlp"))
 
 
-@owned_xfail("phase2_core", "A15")
 @pytest.mark.phase2_core
 def test_contract_download_disables_yt_dlp_plugins(tmp_path: Path) -> None:
     completed, harness, _, _ = run_fetch(tmp_path)
@@ -282,7 +220,6 @@ def test_contract_download_disables_yt_dlp_plugins(tmp_path: Path) -> None:
     assert all(call.get("env", {}).get("YTDLP_NO_PLUGINS") == "1" for call in harness.calls("yt-dlp"))
 
 
-@owned_xfail("phase2_core", "A16")
 @pytest.mark.phase2_core
 def test_contract_cookie_arguments_are_forwarded_without_leaking_to_outputs(tmp_path: Path) -> None:
     cookie = tmp_path / "cookies.txt"
@@ -297,13 +234,15 @@ def test_contract_cookie_arguments_are_forwarded_without_leaking_to_outputs(tmp_
     assert secret.encode() not in public
 
 
-@owned_xfail("phase2_core", "A16")
 @pytest.mark.phase2_core
-def test_contract_cookies_from_browser_is_forwarded_without_leaking_to_outputs() -> None:
-    pytest.fail("Phase 2 must forward cookies-from-browser while redacting secrets from manifest and fetch.log")
+def test_contract_cookies_from_browser_is_forwarded_without_leaking_to_outputs(tmp_path: Path) -> None:
+    completed, harness, _, artifact = run_fetch(tmp_path, extra_env={"VA_COOKIES_FROM_BROWSER": "chrome:profile-secret"})
+    assert completed.returncode == 0
+    assert any("--cookies-from-browser" in call["argv"] and "chrome:profile-secret" in call["argv"] for call in harness.calls("yt-dlp"))
+    public = b"".join(path.read_bytes() for path in artifact.iterdir() if path.is_file())
+    assert b"profile-secret" not in public
 
 
-@owned_xfail("phase2_core", "A17")
 @pytest.mark.phase2_core
 def test_contract_invalid_url_scheme_returns_usage_error(tmp_path: Path) -> None:
     completed, harness, _, artifact = run_fetch(tmp_path, url="file:///tmp/video")
@@ -313,16 +252,22 @@ def test_contract_invalid_url_scheme_returns_usage_error(tmp_path: Path) -> None
     assert not artifact.exists()
 
 
-@owned_xfail("phase2_core", "A17")
 @pytest.mark.phase2_core
-def test_contract_playlist_inputs_are_rejected_before_download() -> None:
-    pytest.fail("Phase 2 must reject metadata with _type=playlist before download")
+def test_contract_playlist_inputs_are_rejected_before_download(tmp_path: Path) -> None:
+    metadata = {"_type": "playlist", "extractor": "fake", "id": "playlist", "entries": [{"id": "abc123"}]}
+    completed, harness, _, artifact = run_fetch(tmp_path, {"resolve_metadata": metadata})
+    assert completed.returncode == 20
+    assert not harness.calls("yt-dlp", mode="download")
+    assert not artifact.exists()
 
 
-@owned_xfail("phase2_core", "A17")
 @pytest.mark.phase2_core
-def test_contract_live_inputs_are_rejected_before_download() -> None:
-    pytest.fail("Phase 2 must reject metadata marked is_live before download")
+def test_contract_live_inputs_are_rejected_before_download(tmp_path: Path) -> None:
+    metadata = {"_type": "video", "extractor": "fake", "id": "abc123", "is_live": True}
+    completed, harness, _, artifact = run_fetch(tmp_path, {"resolve_metadata": metadata})
+    assert completed.returncode == 20
+    assert not harness.calls("yt-dlp", mode="download")
+    assert not artifact.exists()
 
 
 @owned_xfail("phase3_publish", "A23")

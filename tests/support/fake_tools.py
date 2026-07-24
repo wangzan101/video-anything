@@ -322,6 +322,7 @@ class FakeToolHarness:
         env["FAKE_TOOL_SCENARIO_DIR"] = str(self.scenario_dir)
         env["FAKE_TOOL_STATE_DIR"] = str(self.state_dir)
         env["XDG_CONFIG_HOME"] = str(self.root / "xdg")
+        env.setdefault("VA_YTDLP_JS_RUNTIME", "none")
         env.update(extra)
         return env
 
