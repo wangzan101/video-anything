@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from scripts.fetch import Failure, acquire_lock
 from tests.support import FakeToolHarness
 
 
@@ -79,6 +81,22 @@ def run_fetch(
 
 def stdout_lines(stdout: str) -> list[str]:
     return [line for line in stdout.splitlines() if line.strip()]
+
+
+def write_final_fixture(output_root: Path, *, valid: bool = True) -> Path:
+    artifact = output_root / "fake-abc123"
+    artifact.mkdir(parents=True, exist_ok=True)
+    (artifact / "video.mp4").write_bytes(b"fixture video")
+    (artifact / "audio.wav").write_bytes(b"fixture audio")
+    (artifact / "info.json").write_text(json.dumps({"id": "abc123", "extractor": "fake"}) + "\n", encoding="utf-8")
+    if valid:
+        (artifact / "manifest.json").write_text(json.dumps({"schema_version": 1, "status": "ready", "error": None, "extractor": "fake", "id": "abc123", "generation": "fixture", "publish_mode": "initial"}) + "\n", encoding="utf-8")
+        (artifact / "fetch.log").write_text("fixture\n", encoding="utf-8")
+    return artifact
+
+
+def tree_snapshot(root: Path) -> dict[str, str]:
+    return {str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest() for path in root.rglob("*") if path.is_file()}
 
 
 def test_phase0_matrix_has_unique_owned_entries() -> None:
@@ -176,34 +194,81 @@ def test_contract_video_without_audio_returns_50_no_audio(tmp_path: Path) -> Non
     assert not artifact.exists()
 
 
-@owned_xfail("phase3_publish", "A9")
 @pytest.mark.phase3_publish
-def test_contract_valid_final_is_reused_without_redownloading() -> None:
-    pytest.fail("Phase 3 must reuse a validated final without invoking the downloader")
+def test_contract_valid_final_is_reused_without_redownloading(tmp_path: Path) -> None:
+    output_root = tmp_path / "video-out"
+    artifact = write_final_fixture(output_root)
+    before = tree_snapshot(artifact)
+    completed, harness, _, returned = run_fetch(tmp_path, {"download_exit": 42})
+    assert completed.returncode == 0
+    assert returned == artifact
+    assert not harness.calls("yt-dlp", mode="download")
+    assert tree_snapshot(artifact) == before
 
 
-@owned_xfail("phase3_publish", "A10")
 @pytest.mark.phase3_publish
-def test_contract_invalid_final_requires_force() -> None:
-    pytest.fail("Phase 3 must reject an invalid final unless --force is explicit")
+def test_contract_invalid_final_requires_force(tmp_path: Path) -> None:
+    output_root = tmp_path / "video-out"
+    artifact = write_final_fixture(output_root, valid=False)
+    before = tree_snapshot(artifact)
+    completed, harness, _, _ = run_fetch(tmp_path)
+    assert completed.returncode == 60
+    assert not harness.calls("yt-dlp", mode="download")
+    assert tree_snapshot(artifact) == before
 
 
-@owned_xfail("phase3_publish", "A11")
 @pytest.mark.phase3_publish
-def test_contract_force_failure_preserves_existing_final() -> None:
-    pytest.fail("Phase 3 must preserve the old final when a forced build fails")
+def test_contract_force_failure_preserves_existing_final(tmp_path: Path) -> None:
+    output_root = tmp_path / "video-out"
+    artifact = write_final_fixture(output_root)
+    before = tree_snapshot(artifact)
+    completed, _, _, _ = run_fetch(tmp_path, {"download_exit": 42}, extra_args=["--force"])
+    assert completed.returncode == 30
+    assert tree_snapshot(artifact) == before
 
 
-@owned_xfail("phase3_publish", "A12")
 @pytest.mark.phase3_publish
-def test_contract_force_success_recovers_without_mixed_final_state() -> None:
-    pytest.fail("Phase 3 must publish a complete new final and clean only owned backups")
+def test_contract_force_success_recovers_without_mixed_final_state(tmp_path: Path) -> None:
+    output_root = tmp_path / "video-out"
+    artifact = write_final_fixture(output_root)
+    (artifact / "sentinel.txt").write_text("old\n", encoding="utf-8")
+    completed, _, _, returned = run_fetch(tmp_path, extra_args=["--force"])
+    assert completed.returncode == 0
+    assert returned == artifact
+    assert (artifact / "manifest.json").exists() and (artifact / "fetch.log").exists()
+    assert not (artifact / "sentinel.txt").exists()
+    assert not list((output_root / ".backups").glob("*"))
 
 
-@owned_xfail("phase3_publish", "A13")
 @pytest.mark.phase3_publish
-def test_contract_second_writer_fails_fast_when_lock_is_held() -> None:
-    pytest.fail("Phase 3 must fail immediately with artifact_locked when the per-artifact lock exists")
+def test_contract_second_writer_fails_fast_when_lock_is_held(tmp_path: Path) -> None:
+    lock = tmp_path / "video-out" / ".locks" / "fake-abc123.lock"
+    lock.mkdir(parents=True)
+    (lock / "owner.json").write_text("{}\n", encoding="utf-8")
+    completed, _, _, _ = run_fetch(tmp_path)
+    assert completed.returncode == 60
+    assert "artifact_locked" in completed.stderr
+
+
+@pytest.mark.phase3_publish
+@pytest.mark.parametrize(
+    ("hostname", "pid", "age", "reclaim"),
+    [("same", 99999999, 1800, True), ("same", 99999999, 1799, False), ("same", 1, 3600, False), ("other", 99999999, 3600, False)],
+)
+def test_contract_stale_lock_requires_same_host_dead_pid_and_age(tmp_path: Path, hostname: str, pid: int, age: int, reclaim: bool) -> None:
+    import scripts.fetch as fetch_module
+
+    root = tmp_path / "video-out"
+    lock = root / ".locks" / "fake-abc123.lock"
+    lock.mkdir(parents=True)
+    owner_host = fetch_module.socket.gethostname() if hostname == "same" else "different-host"
+    (lock / "owner.json").write_text(json.dumps({"hostname": owner_host, "pid": pid, "created_at": fetch_module.time.time() - age}) + "\n", encoding="utf-8")
+    if reclaim:
+        acquired = acquire_lock(root, "fake-abc123")
+        assert acquired.exists()
+    else:
+        with pytest.raises(Failure, match="artifact_locked"):
+            acquire_lock(root, "fake-abc123")
 
 
 @pytest.mark.phase2_core
@@ -270,13 +335,24 @@ def test_contract_live_inputs_are_rejected_before_download(tmp_path: Path) -> No
     assert not artifact.exists()
 
 
-@owned_xfail("phase3_publish", "A23")
 @pytest.mark.phase3_publish
 def test_contract_ambiguous_publish_recovery_state_fails_without_mutation(tmp_path: Path) -> None:
-    pytest.fail("Phase 3 must reject multiple active journals without moving or deleting conflict paths")
+    transactions = tmp_path / "video-out" / ".transactions"
+    transactions.mkdir(parents=True)
+    (transactions / "fake-abc123.one.json").write_text("{}\n", encoding="utf-8")
+    (transactions / "fake-abc123.two.json").write_text("{}\n", encoding="utf-8")
+    before = tree_snapshot(transactions)
+    completed, _, _, _ = run_fetch(tmp_path)
+    assert completed.returncode == 60
+    assert "ambiguous_recovery" in completed.stderr
+    assert tree_snapshot(transactions) == before
 
 
-@owned_xfail("phase3_publish", "A24")
 @pytest.mark.phase3_publish
-def test_contract_reuse_does_not_rewrite_manifest_or_fetch_log() -> None:
-    pytest.fail("Phase 3 must keep final manifest, fetch.log, inode and mtime immutable on reuse")
+def test_contract_reuse_does_not_rewrite_manifest_or_fetch_log(tmp_path: Path) -> None:
+    output_root = tmp_path / "video-out"
+    artifact = write_final_fixture(output_root)
+    before = tree_snapshot(artifact)
+    completed, _, _, _ = run_fetch(tmp_path, {"download_exit": 42})
+    assert completed.returncode == 0
+    assert tree_snapshot(artifact) == before

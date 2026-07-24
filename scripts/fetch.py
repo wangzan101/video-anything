@@ -7,8 +7,10 @@ import hashlib
 import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
+import time
 import uuid
 from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -164,7 +166,7 @@ def normalize(stage: Path, ffmpeg: str, ffprobe: str, env: dict[str, str]) -> Pa
     return target
 
 
-def validate(stage: Path, metadata: dict[str, object], ffmpeg: str, ffprobe: str, env: dict[str, str]) -> dict[str, object]:
+def validate(stage: Path, metadata: dict[str, object], ffmpeg: str, ffprobe: str, env: dict[str, str], *, extract_audio: bool = True) -> dict[str, object]:
     video, info = stage / "video.mp4", stage / "info.json"
     video_data = probe(video, ffprobe, env)
     videos, audios = stream_list(video_data, "video"), stream_list(video_data, "audio")
@@ -181,12 +183,15 @@ def validate(stage: Path, metadata: dict[str, object], ffmpeg: str, ffprobe: str
     if info_data.get("id") != metadata.get("id") or info_data.get("extractor") != metadata.get("extractor"):
         raise Failure(MEDIA, "info_identity_mismatch")
     audio = stage / "audio.wav"
-    try:
-        result = subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000", str(audio)], capture_output=True, text=True, timeout=14400, env=env, check=False)
-    except subprocess.TimeoutExpired as exc:
-        raise Failure(MEDIA, "timeout", str(exc)) from exc
-    if result.returncode or not audio.exists():
-        raise Failure(MEDIA, "audio_extract_failed", result.stderr[-1000:])
+    if extract_audio:
+        try:
+            result = subprocess.run([ffmpeg, "-y", "-loglevel", "error", "-i", str(video), "-vn", "-ac", "1", "-ar", "16000", str(audio)], capture_output=True, text=True, timeout=14400, env=env, check=False)
+        except subprocess.TimeoutExpired as exc:
+            raise Failure(MEDIA, "timeout", str(exc)) from exc
+        if result.returncode or not audio.exists():
+            raise Failure(MEDIA, "audio_extract_failed", result.stderr[-1000:])
+    elif not audio.exists():
+        raise Failure(MEDIA, "audio_missing")
     audio_data = probe(audio, ffprobe, env)
     wav_streams = stream_list(audio_data, "audio")
     if not wav_streams or str(audio_data.get("format", {}).get("format_name", "")).lower() != "wav":
@@ -200,15 +205,90 @@ def validate(stage: Path, metadata: dict[str, object], ffmpeg: str, ffprobe: str
     return {"video": {"path": "video.mp4", "bytes": video.stat().st_size, "duration": vd, "container": "mp4", "vcodec": videos[0].get("codec_name"), "acodec": audios[0].get("codec_name")}, "audio": {"path": "audio.wav", "bytes": audio.stat().st_size, "duration": ad, "codec": wav.get("codec_name"), "sample_rate": 16000, "channels": 1}, "info": {"path": "info.json", "bytes": info.stat().st_size}}
 
 
-def write_manifest(stage: Path, metadata: dict[str, object], url: str, generation: str, tools: tuple[str, str, str, dict[str, str | None]], artifacts: dict[str, object]) -> None:
+def write_manifest(stage: Path, metadata: dict[str, object], url: str, generation: str, tools: tuple[str, str, str, dict[str, str | None]], artifacts: dict[str, object], *, publish_mode: str = "initial", replaces_fingerprint: dict[str, object] | None = None) -> None:
     ytdlp, ffmpeg, ffprobe, js = tools
-    manifest = {"schema_version": 1, "status": "ready", "error": None, "source": {"url_redacted": redact(url), "url_sha256": sha256(url)}, "extractor": metadata["extractor"], "id": metadata["id"], "generation": generation, "publish_mode": "initial", "tools": {"yt_dlp": ytdlp, "ffmpeg": ffmpeg, "ffprobe": ffprobe, "js_runtime": js}, "artifacts": artifacts, "warnings": []}
+    manifest = {"schema_version": 1, "status": "ready", "error": None, "source": {"url_redacted": redact(url), "url_sha256": sha256(url)}, "extractor": metadata["extractor"], "id": metadata["id"], "generation": generation, "publish_mode": publish_mode, "tools": {"yt_dlp": ytdlp, "ffmpeg": ffmpeg, "ffprobe": ffprobe, "js_runtime": js}, "artifacts": artifacts, "warnings": []}
+    if publish_mode == "force":
+        manifest["replaces_fingerprint"] = replaces_fingerprint
     tmp = stage / "manifest.json.tmp"
     tmp.write_text(json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8")
     with tmp.open("rb") as handle:
         os.fsync(handle.fileno())
     tmp.replace(stage / "manifest.json")
     (stage / "fetch.log").write_text(f"status=ready\nurl_sha256={sha256(url)}\n", encoding="utf-8")
+
+
+def acquire_lock(root: Path, key: str) -> Path:
+    lock = root / ".locks" / f"{key}.lock"
+    lock.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        lock.mkdir()
+    except FileExistsError as exc:
+        owner_path = lock / "owner.json"
+        try:
+            owner = json.loads(owner_path.read_text(encoding="utf-8"))
+            same_host = owner.get("hostname") == socket.gethostname()
+            pid = int(owner["pid"])
+            age = time.time() - float(owner["created_at"])
+            try:
+                os.kill(pid, 0)
+                alive = True
+            except ProcessLookupError:
+                alive = False
+            except PermissionError:
+                alive = True
+            if same_host and not alive and age >= 1800:
+                shutil.rmtree(lock)
+                lock.mkdir()
+            else:
+                raise Failure(PUBLISH, "artifact_locked") from exc
+        except Failure:
+            raise
+        except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError) as owner_error:
+            raise Failure(PUBLISH, "artifact_locked", str(owner_error)) from exc
+    owner = {"hostname": socket.gethostname(), "pid": os.getpid(), "created_at": time.time(), "owner_token": str(uuid.uuid4())}
+    (lock / "owner.json").write_text(json.dumps(owner, sort_keys=True) + "\n", encoding="utf-8")
+    return lock
+
+
+def journal_update(path: Path, payload: dict[str, object]) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    with temporary.open("rb") as handle:
+        os.fsync(handle.fileno())
+    temporary.replace(path)
+
+
+def final_is_valid(final: Path, metadata: dict[str, object], ffmpeg: str, ffprobe: str, env: dict[str, str]) -> bool:
+    manifest = final / "manifest.json"
+    if not manifest.exists():
+        return False
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    if data.get("status") != "ready" or data.get("extractor") != metadata.get("extractor") or data.get("id") != metadata.get("id"):
+        return False
+    try:
+        validate(final, metadata, ffmpeg, ffprobe, env, extract_audio=False)
+    except Failure:
+        return False
+    return True
+
+
+def final_fingerprint(final: Path) -> dict[str, object]:
+    manifest = final / "manifest.json"
+    state = "missing"
+    digest: str | None = None
+    if manifest.exists():
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+            state = "ready" if data.get("status") == "ready" else "invalid"
+            digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
+        except (OSError, json.JSONDecodeError):
+            state = "invalid"
+    stat = final.stat()
+    return {"device": stat.st_dev, "inode": stat.st_ino, "manifest_state": state, "manifest_sha256": digest}
 
 
 def main(argv: list[str]) -> int:
@@ -224,18 +304,56 @@ def main(argv: list[str]) -> int:
         ytdlp, ffmpeg, ffprobe, js = require_tool("yt-dlp"), require_tool("ffmpeg"), require_tool("ffprobe"), runtime()
         env = os.environ.copy(); env["YTDLP_NO_PLUGINS"] = "1"
         metadata = resolve(args.url, ytdlp, js, env)
-        root = Path(args.output_root).expanduser().resolve(); final = root / f"{metadata['extractor']}-{metadata['id']}"
-        if final.exists():
-            raise Failure(PUBLISH, "existing_final_requires_phase3")
+        root = Path(args.output_root).expanduser().resolve(); key = f"{metadata['extractor']}-{metadata['id']}"; final = root / key
         root.mkdir(parents=True, exist_ok=True)
-        generation = str(uuid.uuid4()); stage = root / ".staging" / f"{metadata['extractor']}-{metadata['id']}.{generation}"; stage.mkdir(parents=True, exist_ok=False)
-        download(args.url, stage, ytdlp, js, env)
-        normalize(stage, ffmpeg, ffprobe, env)
-        artifacts = validate(stage, metadata, ffmpeg, ffprobe, env)
-        write_manifest(stage, metadata, args.url, generation, (ytdlp, ffmpeg, ffprobe, js), artifacts)
-        stage.replace(final)
-        print(final)
-        return 0
+        lock = acquire_lock(root, key)
+        try:
+            journals = list((root / ".transactions").glob(f"{key}.*.json")) if (root / ".transactions").exists() else []
+            if len(journals) > 1:
+                raise Failure(PUBLISH, "ambiguous_recovery")
+            if final.exists() and not args.force and final_is_valid(final, metadata, ffmpeg, ffprobe, env):
+                print(final)
+                return 0
+            if final.exists() and not args.force:
+                raise Failure(PUBLISH, "invalid_final_requires_force")
+            old_fingerprint = final_fingerprint(final) if final.exists() else None
+            generation = str(uuid.uuid4()); stage = root / ".staging" / f"{key}.{generation}"; journal_dir = root / ".transactions"; journal_dir.mkdir(parents=True, exist_ok=True); journal = journal_dir / f"{key}.{generation}.json"
+            journal_data: dict[str, object] = {"schema_version": 1, "key": key, "extractor": metadata["extractor"], "id": metadata["id"], "generation": generation, "source_url_sha256": sha256(args.url), "publish_mode": "force" if final.exists() else "initial", "stage": str(stage.relative_to(root)), "phase": "creating", "expected_final_fingerprint": old_fingerprint}
+            journal_update(journal, journal_data)
+            stage.mkdir(parents=True, exist_ok=False)
+            provenance = {"schema_version": 1, "key": key, "extractor": metadata["extractor"], "id": metadata["id"], "source_url_sha256": sha256(args.url), "generation": generation, "publish_mode": journal_data["publish_mode"], "journal": journal.name}
+            (stage / ".provenance.json").write_text(json.dumps(provenance, sort_keys=True) + "\n", encoding="utf-8")
+            journal_data["phase"] = "building"; journal_update(journal, journal_data)
+            download(args.url, stage, ytdlp, js, env)
+            normalize(stage, ffmpeg, ffprobe, env)
+            artifacts = validate(stage, metadata, ffmpeg, ffprobe, env)
+            journal_data["phase"] = "stage_ready"; journal_update(journal, journal_data)
+            mode = "force" if final.exists() else "initial"
+            write_manifest(stage, metadata, args.url, generation, (ytdlp, ffmpeg, ffprobe, js), artifacts, publish_mode=mode, replaces_fingerprint=old_fingerprint)
+            (stage / ".provenance.json").unlink(missing_ok=True)
+            if final.exists():
+                backup = root / ".backups" / f"{key}.{generation}"
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                journal_data["backup"] = str(backup.relative_to(root)); journal_data["phase"] = "backup_move_started"; journal_update(journal, journal_data)
+                final.replace(backup)
+                journal_data["phase"] = "backup_moved"; journal_update(journal, journal_data)
+                try:
+                    journal_data["phase"] = "final_move_started"; journal_update(journal, journal_data)
+                    stage.replace(final)
+                except OSError:
+                    backup.replace(final)
+                    raise
+                journal_data["phase"] = "final_moved"; journal_update(journal, journal_data)
+                shutil.rmtree(backup)
+            else:
+                journal_data["phase"] = "final_move_started"; journal_update(journal, journal_data)
+                stage.replace(final)
+                journal_data["phase"] = "final_moved"; journal_update(journal, journal_data)
+            journal_data["phase"] = "committed"; journal_update(journal, journal_data); journal.unlink(missing_ok=True)
+            print(final)
+            return 0
+        finally:
+            shutil.rmtree(lock, ignore_errors=True)
     except Failure as failure:
         print(f"ERROR: {failure.reason}{(': ' + failure.detail) if failure.detail else ''}", file=sys.stderr)
         return failure.code
