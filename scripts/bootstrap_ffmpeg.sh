@@ -73,6 +73,30 @@ case "$os" in
       exit 1
     fi
     chmod +x "$work/ffmpeg"
+
+    probe_info_url="https://evermeet.cx/ffmpeg/ffprobe/release"
+    probe_info="$(curl -fsSL "$probe_info_url")" || { echo "ERROR: cannot reach $probe_info_url" >&2; exit 1; }
+    probe_zip_block="$(printf '%s' "$probe_info" | grep -o '"zip":{[^}]*}' | head -1)"
+    probe_zip_url="$(printf '%s' "$probe_zip_block" | grep -o '"url":"[^"]*"' | head -1 | sed -E 's/.*:"([^"]*)"/\1/')"
+    if [ -z "$probe_zip_url" ]; then
+      echo "ERROR: could not parse evermeet.cx ffprobe metadata from $probe_info_url" >&2
+      exit 1
+    fi
+    if ! curl -fsSL "$probe_zip_url" -o "$work/ffprobe.zip"; then
+      echo "ERROR: ffprobe download failed: $probe_zip_url" >&2
+      exit 1
+    fi
+    if ! ( cd "$work" && unzip -q ffprobe.zip ); then
+      echo "ERROR: could not unzip downloaded ffprobe archive from $probe_zip_url" >&2
+      exit 1
+    fi
+    probe_extracted="$(find "$work" -maxdepth 2 -type f -name ffprobe | head -1)"
+    if [ -z "$probe_extracted" ]; then
+      echo "ERROR: expected 'ffprobe' binary not found inside archive from $probe_zip_url" >&2
+      exit 1
+    fi
+    cp "$probe_extracted" "$work/ffprobe"
+    chmod +x "$work/ffprobe"
     ;;
 
   Linux)
@@ -127,12 +151,15 @@ case "$os" in
       exit 1
     fi
     extracted="$(find "$work" -maxdepth 2 -type f -name ffmpeg | head -1)"
-    if [ -z "$extracted" ]; then
-      echo "ERROR: 'ffmpeg' binary not found inside $tarball" >&2
+    extracted_probe="$(find "$work" -maxdepth 2 -type f -name ffprobe | head -1)"
+    if [ -z "$extracted" ] || [ -z "$extracted_probe" ]; then
+      echo "ERROR: ffmpeg + ffprobe binaries not found inside $tarball" >&2
       exit 1
     fi
     cp "$extracted" "$work/ffmpeg"
+    cp "$extracted_probe" "$work/ffprobe"
     chmod +x "$work/ffmpeg"
+    chmod +x "$work/ffprobe"
     ;;
 
   *)
@@ -141,10 +168,11 @@ case "$os" in
     ;;
 esac
 
-if ! "$work/ffmpeg" -version >/dev/null 2>&1; then
-  echo "ERROR: fetched ffmpeg binary does not run on this system (arch mismatch?)" >&2
+if ! "$work/ffmpeg" -version >/dev/null 2>&1 || ! "$work/ffprobe" -version >/dev/null 2>&1; then
+  echo "ERROR: fetched ffmpeg/ffprobe pair does not run on this system (arch mismatch?)" >&2
   exit 1
 fi
 
 mv "$work/ffmpeg" "$BIN/ffmpeg"
-echo ">> ffmpeg provisioned: $("$BIN/ffmpeg" -version | head -1)"
+mv "$work/ffprobe" "$BIN/ffprobe"
+echo ">> ffmpeg + ffprobe provisioned: $("$BIN/ffmpeg" -version | head -1)"
