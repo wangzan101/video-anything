@@ -4,6 +4,8 @@
 
 **Goal:** 一个跨工具 Agent Skill:给一个视频链接,产出无水印视频/音频/文案/字幕/封面/元数据,并由 agent 做 4 种 AI 加工;零 key(默认)、可离线、装上即用。
 
+> **历史计划提示（2026-07-24）**：本计划保留为早期设计记录；下载实现已按 [2026-07-24-video-download-foundation.md](2026-07-24-video-download-foundation.md) 分阶段重做。不要把本文件的未勾选项或 Tier-1 目标当作当前下载能力声明。
+
 **Architecture:** 方案 A —— SKILL.md 路由 + 独立脚本(bootstrap/fetch/transcribe/check),agent 负责编排与 AI playbook。纯逻辑抽到 `scripts/lib/asr_utils.py` 做 TDD 单测;网络/二进制部分靠 `tests/smoke.sh` 冒烟。
 
 **Tech Stack:** bash、Python 3(标准库 + faster-whisper/whisper CLI 二选一)、yt-dlp、ffmpeg、pytest。
