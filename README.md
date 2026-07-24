@@ -2,127 +2,137 @@
 
 # 🎬 video-anything
 
-### 粘一个链接 → 关于这条视频的*一切*
+### 面向 Agent 的视频下载、转录与内容处理 Skill
 
-下载、转文案、AI 改写口播稿 —— 在任意 AI 工具里，**零 API key、零手动安装、本地搞定**。下载契约正在加固中，Phase4 门禁前不要只凭目录存在判断成功。
+把公开可访问的视频 URL 交给支持 [Agent Skills](https://agentskills.io) 的工具，完成下载、音频抽取、转录和后续内容整理。
 
-[English](README.en.md) · **简体中文**
+[English](README.en.md) · **简体中文** · [下载契约](docs/superpowers/specs/2026-07-24-video-download-contract.md)
 
 [![Agent Skills](https://img.shields.io/badge/Agent%20Skills-开放标准-6b46c1)](https://agentskills.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![stars](https://img.shields.io/github/stars/wangzan101/video-anything?style=social)](https://github.com/wangzan101/video-anything)
 
 </div>
 
-<!-- TODO: 录一个 15s demo GIF 放这里 —— 粘抖音链接 → 出无水印视频 + 文案 + 小红书改写。这是转化率最高的一块。 -->
-<p align="center"><img src="docs/demo.gif" alt="演示" width="720"></p>
+> 当前重点是把“URL → 可验证下载产物”做成可靠地基。平台状态仍以真实 smoke 证据为准；不能把目录存在、yt-dlp 支持站点列表或一次偶然成功当成稳定支持。
 
----
+## 能做什么
 
-## 为什么做这个
+- 使用 yt-dlp 下载单个公开视频，不处理播放列表、直播、DRM、付费墙或会员内容。
+- 用 ffmpeg/ffprobe 验证媒体，而不是靠文件扩展名判断成功。
+- 成功时发布 `video.mp4`、`audio.wav`、`info.json`、`manifest.json` 和 `fetch.log`。
+- 默认复用经过重新验证的 final；`--force` 在新结果验证完成前保留旧结果。
+- 通过本地 Whisper/其他已配置 ASR 方案进行转录，再由你的 Agent 做摘要、改写或选题整理。
 
-`yt-dlp` 只会**下载** —— 它不转文案，也不理解内容。
-那些付费的「视频文案提取」站**能**做到 —— 但闭源、收费，而且只给你一段文字。
+AI 改写和总结由调用它的 Agent 完成，本项目不要求 OpenAI、Anthropic 或其他 LLM API key。
 
-**`video-anything` 把整条链做成一个 skill：** `下载 → 本地转文案 → agent 自己改写/总结`。
-不需要任何外部大模型 key —— 因为**读到这个 skill 的 agent 本身就是那个 LLM**。
+## 当前状态
 
-## 粘一个链接，全都有
+下载核心已经完成离线契约、真实媒体本地集成和默认 CI；真实平台 smoke 仍是独立的 release/nightly 门禁。
 
-| | |
-|---|---|
-| 📹 **视频本体** | 抖音 / 快手 拿到的是无水印源 |
-| 🎧 **音频** | 16k 单声道，可直接喂 ASR |
-| 📝 **文案 / transcript** | 本地 Whisper，带时间戳 |
-| 💬 **字幕** | 平台自带字幕(只信人工字幕) |
-| 🖼️ **封面** + 🏷️ **元数据** | 标题、简介、标签、作者、数据 |
-| ✨ **AI 改写 / 总结** | 由**你的 agent** 完成，免 key |
-
-## ✨ yt-dlp 做不到的那半条
-
-把文案丢进内置 **playbook**，agent 直接产出能发的稿子：
-
-- **提炼要点** —— 一句话主旨 + 3–7 条带时间戳的要点
-- **口播稿改写** —— 一键改写成 **小红书种草 / 知识拆解 / 播客口播**(或你自定义的风格)，并带**「不编造」硬约束**
-
-<details>
-<summary><b>看效果(口播改写 → 小红书种草)</b></summary>
-
-> **输入**(原始文案)：`[00:03] 我做自由职业三年了,前两年天天被拖延症折磨…`
-> **输出**(小红书风格)：`真的会哭死,自由职业三年,前两年天天被拖延症拿捏😭 后来才想明白,根本不是意志力不够,是"开始"这个动作太难了…`
-
-完整 3 风格对照见 [`references/examples/rewrite.md`](references/examples/rewrite.md)
-
-</details>
-
-## 在你自己的 AI 工具里就能用
-
-基于 [Agent Skills 开放标准](https://agentskills.io) —— **一次写好，处处调用**：Claude Code · Cursor · OpenAI Codex · GitHub Copilot · Gemini CLI · 以及 40+ 个 agent 工具。
+| 平台 | 当前等级 | 说明 |
+|---|---|---|
+| YouTube、Bilibili、Twitter/X | provisional | 需要按记录的公开 fixture 复测；YouTube 还依赖 JS runtime |
+| Douyin | provisional | 短链、登录和反爬条件需要单独 smoke |
+| Kuaishou | experimental | 不承诺固定 extractor 或无水印结果 |
+| WeChat Channels | unsupported | 不在当前 v1 支持范围 |
+| 其他 yt-dlp 站点 | experimental | upstream 支持不等于本项目 READY 证据 |
 
 ## 安装
 
-**1. 装上 skill**(放到你的 agent 找 skill 的目录):
-
 ```bash
 git clone https://github.com/wangzan101/video-anything ~/.claude/skills/video-anything
-# Cursor / Codex 等也会扫 .claude/skills、.cursor/skills、.agents/skills
+cd ~/.claude/skills/video-anything
 ```
 
-**2. 没了。** 不用 `brew install`、不用手动配环境。首次使用时 skill 会**自动就位**自己需要的工具(`yt-dlp` + `ffmpeg` + 本地 Whisper)到 `~/.video-anything/`，**不污染你的系统**。
-
-> 想先自检 / 预装? `bash scripts/check.sh`。详情见 [`references/install.md`](references/install.md)。
-
-## 怎么用
-
-直接跟你的 agent 说话，它会自己挑要执行的步骤；下载契约是目标 contract，见 [`docs/superpowers/specs/2026-07-24-video-download-contract.md`](docs/superpowers/specs/2026-07-24-video-download-contract.md)：
-
-- *"下载这个抖音视频,要无水印"*
-- *"把这个 B 站视频转成文案"*
-- *"总结这个 YouTube 视频的要点,再改写成小红书口播稿"*
-
-<details>
-<summary>底层实际跑的命令</summary>
+运行时需要 Python 3、yt-dlp、ffmpeg 和 ffprobe。可以先检查：
 
 ```bash
-bash scripts/fetch.sh "<URL>" ./video-out                  # 下载 + 素材（目标 contract 后续会补齐 manifest）
-python3 scripts/transcribe.py ./video-out/<extractor>-<id>/audio.wav   # 本地转文案
-# → agent 读文案,按 playbook 写出 summary.md
-```
-</details>
-
-`fetch.sh` 的目标 contract 是在 `video.mp4`、`audio.wav`、`info.json`、`manifest.json` 都验证通过后才会发布 final；Phase4 门禁前不要仅凭当前目录判断成功，失败时 stdout 仍应为空。
-
-## 工作原理
-
-```
-链接 ─► 识别平台 ─► yt-dlp(视频 + 人工字幕 + 封面 + 元数据)
-      └► ffmpeg → 16k 音频 ─► 有人工字幕? ── 有 ─► 直接用(跳过 ASR)
-                                          └─ 无 ─► 本地 Whisper → 文案
-      └► agent 跑 playbook ─► summary.md  (全程免 key)
+bash scripts/check.sh
 ```
 
-## 平台支持
+`scripts/bootstrap.sh` 可将 yt-dlp、ffmpeg/ffprobe 和 Deno（默认 runtime 策略）放入独立的 `VA_HOME`。支持矩阵为：
 
-> 以下状态是 Phase 0 临时校准，等待新的 download foundation smoke 通过后再升级。
+- macOS 10.15+：x86_64、arm64
+- Linux glibc 2.17+：x86_64、aarch64；WSL 按实际 Linux 环境判断
+- musl、Linux armv7l、原生 Windows：unsupported
 
-| 平台 | 状态 |
-|---|---|
-| YouTube · Bilibili · Twitter/X | provisional |
-| 抖音 Douyin | provisional |
-| 快手 Kuaishou | experimental |
-| 视频号(微信) | unsupported |
-| yt-dlp 支持的 1800+ 站点 | experimental |
+YouTube JS runtime：
 
-## 边界
+```bash
+export VA_YTDLP_JS_RUNTIME=auto   # 默认，优先受控 Deno >=2.3
+# deno：显式使用 Deno >=2.3
+# node：仅显式选择 Node >=22，项目不会安装 Node
+# none：禁用 JS runtime；不代表 YouTube capability ready
+```
 
-仅限**公开可访问**的内容。**不**绕过 DRM、付费墙、大会员等付费内容。定位:创作者、研究、个人存档。
+更多安装说明见 [`references/install.md`](references/install.md)。
 
----
+## 直接使用下载器
 
-<div align="center">
+```bash
+bash scripts/fetch.sh "https://example.com/video" ./video-out
+```
 
-**如果它帮你省了时间,点个 ⭐ Star 支持一下 —— 这是对独立开发最大的鼓励。**
+强制重新生成：
 
-MIT © [wangzan101](https://github.com/wangzan101)
+```bash
+bash scripts/fetch.sh "https://example.com/video" ./video-out --force
+```
 
-</div>
+成功时 stdout 只输出最终目录路径；失败时 stdout 为空，详细原因写入 stderr。固定退出码：
+
+| 码 | 含义 |
+|---:|---|
+| 0 | READY |
+| 2 | 参数或 URL 错误 |
+| 10 | 依赖、宿主或 JS runtime 不可用 |
+| 20 | URL 解析失败、播放列表或直播 |
+| 30 | 下载失败 |
+| 40 | 无法得到真实兼容 MP4 |
+| 50 | 视频、JSON、音频或时长校验失败 |
+| 60 | 锁、发布或恢复冲突 |
+
+成功目录：
+
+```text
+video-out/<extractor>-<id>/
+├── video.mp4       # 可解析 MP4；优先 H.264/AAC
+├── audio.wav       # PCM WAV、16 kHz、单声道
+├── info.json       # 与 extractor/id 一致的元数据
+├── manifest.json   # status=ready、校验结果和 provenance
+└── fetch.log       # 脱敏诊断日志
+```
+
+封面和人工字幕属于可选资产。失败 staging、journal、backup 位于输出根目录下的隐藏事务目录中，用于诊断和恢复，不应直接交给下游 Agent。
+
+## 在 Agent 中使用
+
+安装 Skill 后，可以直接提出类似请求：
+
+- “下载这个公开视频并验证产物。”
+- “把已经下载的音频转成带时间戳的中文文案。”
+- “根据 transcript 提炼要点，再改写成小红书口播稿。”
+
+Skill 的操作边界和下游流程见 [`SKILL.md`](SKILL.md)。
+
+## 测试与 CI
+
+本地离线测试不访问网络：
+
+```bash
+python -m pytest -q
+bash -n scripts/*.sh tests/smoke.sh
+git diff --check
+```
+
+真实媒体集成使用本机 ffmpeg/ffprobe。平台 smoke 是显式运行的 release/nightly 检查：
+
+```bash
+bash tests/smoke.sh --platform youtube --url "<public-fixture-url>"
+```
+
+仓库不内置 URL、cookie 或私密 fixture；smoke 报告只保存 URL hash 和脱敏诊断。每个平台达到“两条公开 fixture、各连续三次 READY”后，才可以把状态升级为 `supported`。
+
+## 边界与许可
+
+仅处理你有权访问的公开内容。不绕过 DRM、付费墙、登录限制或平台安全措施。项目采用 MIT License，见 [`LICENSE`](LICENSE)。

@@ -2,127 +2,137 @@
 
 # 🎬 video-anything
 
-### One link → *everything* about a video.
+### A video download, transcription, and content-processing Skill for Agents
 
-Download it, transcribe it, and let your AI rewrite it — in any agent, with **zero API keys and zero manual setup**. The download contract is still being hardened, so do not treat directory presence as success before the Phase 4 gate.
+Give an Agent Skills-compatible tool a public video URL and get a validated download, extracted audio, transcription inputs, and downstream content work.
 
-**English** · [简体中文](README.md)
+**English** · [简体中文](README.md) · [Download contract](docs/superpowers/specs/2026-07-24-video-download-contract.md)
 
 [![Agent Skills](https://img.shields.io/badge/Agent%20Skills-open%20standard-6b46c1)](https://agentskills.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![stars](https://img.shields.io/github/stars/wangzan101/video-anything?style=social)](https://github.com/wangzan101/video-anything)
 
 </div>
 
-<!-- TODO: drop a 15s demo GIF here — paste a link → no-watermark video + transcript + rewrite. Highest-converting asset. -->
-<p align="center"><img src="docs/demo.gif" alt="demo" width="720"></p>
+> The current focus is making “URL → verifiable artifact” dependable. Platform status is evidence-based: directory existence, yt-dlp site-list entries, or one lucky download are not support proof.
 
----
+## What it does
 
-## Why this exists
+- Downloads one public video with yt-dlp; playlists, live streams, DRM, paywalls, and membership-only content are out of scope.
+- Uses ffmpeg/ffprobe to validate media instead of trusting file extensions.
+- Publishes `video.mp4`, `audio.wav`, `info.json`, `manifest.json`, and `fetch.log` only after validation.
+- Reuses a revalidated final by default; `--force` keeps the previous final intact until the replacement is ready.
+- Feeds the audio into your configured local ASR workflow, then lets your Agent summarize or rewrite the transcript.
 
-`yt-dlp` **downloads** — but it can't transcribe, and it can't understand.
-The paid "video-to-text" sites **can** — but they're closed, cost money, and only hand you text.
+Your Agent performs the LLM work; this project does not require an OpenAI, Anthropic, or other LLM API key.
 
-**`video-anything` closes the loop *as a skill*:** `download → local transcript → the agent itself rewrites/summarizes`.
-No external LLM key — because the agent reading this skill **is** the LLM.
+## Current status
 
-## Paste one link, get all of it
+The download core has offline contract coverage, real local media integration, and default CI. Real platform smoke remains a separate release/nightly gate.
 
-| | |
-|---|---|
-| 📹 **Video file** | no-watermark on Douyin / Kuaishou |
-| 🎧 **Audio** | 16k mono, ASR-ready |
-| 📝 **Transcript** | local Whisper, timestamped |
-| 💬 **Subtitles** | platform subs when available (human subs only) |
-| 🖼️ **Cover** + 🏷️ **Metadata** | title, description, tags, author, stats |
-| ✨ **AI rewrite / summary** | done by *your* agent, no key |
-
-## ✨ The part yt-dlp can't do
-
-Feed the transcript into a built-in **playbook** and your agent produces publish-ready copy:
-
-- **Key points** — one-line thesis + 3–7 timestamped highlights
-- **Voiceover rewrite** — rewrite into distinct social styles (or your own), with a hard *no-fabrication* rule
-
-<details>
-<summary><b>See it (rewrite → social "种草" style)</b></summary>
-
-> **In** (raw transcript): `[00:03] 我做自由职业三年了,前两年天天被拖延症折磨…`
-> **Out** (小红书 style): `真的会哭死,自由职业三年,前两年天天被拖延症拿捏😭 后来才想明白,根本不是意志力不够,是"开始"这个动作太难了…`
-
-Full 3-style example: [`references/examples/rewrite.md`](references/examples/rewrite.md)
-
-</details>
-
-## Works in *your* agent
-
-Built on the [Agent Skills open standard](https://agentskills.io) — **write once, call anywhere**: Claude Code · Cursor · OpenAI Codex · GitHub Copilot · Gemini CLI · and 40+ more.
+| Platform | Level | Notes |
+|---|---|---|
+| YouTube, Bilibili, Twitter/X | provisional | Requires recorded public fixtures; YouTube also needs a JS runtime |
+| Douyin | provisional | Short links, login, and anti-bot conditions need separate smoke coverage |
+| Kuaishou | experimental | No fixed extractor or no-watermark guarantee |
+| WeChat Channels | unsupported | Outside the current v1 support scope |
+| Other yt-dlp sites | experimental | Upstream availability is not READY evidence |
 
 ## Install
 
-**1. Add the skill** (drop it where your agent looks for skills):
-
 ```bash
 git clone https://github.com/wangzan101/video-anything ~/.claude/skills/video-anything
-# Cursor / Codex / others also scan .claude/skills, .cursor/skills, .agents/skills
+cd ~/.claude/skills/video-anything
 ```
 
-**2. That's it.** No `brew install`, no manual setup. On first use the skill **auto-provisions** its own tools (`yt-dlp` + `ffmpeg` + local Whisper) into `~/.video-anything/` — nothing pollutes your system.
-
-> Want to check/pre-provision? `bash scripts/check.sh`. Details: [`references/install.md`](references/install.md).
-
-## Use
-
-Just talk to your agent — it picks the steps; the download target contract lives in [`docs/superpowers/specs/2026-07-24-video-download-contract.md`](docs/superpowers/specs/2026-07-24-video-download-contract.md):
-
-- *"Download this Douyin video, no watermark"*
-- *"Turn this Bilibili video into a transcript"*
-- *"Summarize this YouTube video, then rewrite it as a 小红书 script"*
-
-<details>
-<summary>What runs under the hood</summary>
+Runtime requirements are Python 3, yt-dlp, ffmpeg, and ffprobe. Check the environment with:
 
 ```bash
-bash scripts/fetch.sh "<URL>" ./video-out                 # download + assets (the target contract will add manifest validation)
-python3 scripts/transcribe.py ./video-out/<extractor>-<id>/audio.wav  # local transcript
-# → the agent reads the transcript and writes summary.md via a playbook
-```
-</details>
-
-`fetch.sh` targets final publication only after `video.mp4`, `audio.wav`, `info.json`, and `manifest.json` validate; before the Phase 4 gate, do not infer success from the current directory alone, and stdout should still be empty on failure.
-
-## How it works
-
-```
-URL ─► detect platform ─► yt-dlp (video + human subs + cover + metadata)
-      └► ffmpeg → 16k audio ─► human subtitle? ── yes ─► use it (skip ASR)
-                                              └─ no ──► local Whisper → transcript
-      └► agent runs a playbook ─► summary.md  (no API key)
+bash scripts/check.sh
 ```
 
-## Platforms
+`scripts/bootstrap.sh` can provision yt-dlp, an ffmpeg/ffprobe pair, and Deno (the default runtime policy) under an isolated `VA_HOME`. v1 supports:
 
-> These statuses are Phase 0 temporary calibration and will be upgraded after the new download-foundation smoke passes.
+- macOS 10.15+: x86_64 and arm64
+- Linux glibc 2.17+: x86_64 and aarch64; WSL follows its actual Linux host
+- musl, Linux armv7l, and native Windows: unsupported
 
-| Platform | Status |
-|---|---|
-| YouTube · Bilibili · Twitter/X | provisional |
-| Douyin | provisional |
-| Kuaishou | experimental |
-| WeChat Channels | unsupported |
-| 1800+ others via yt-dlp | experimental |
+YouTube JS runtime selection:
 
-## Boundaries
+```bash
+export VA_YTDLP_JS_RUNTIME=auto   # default; controlled Deno >=2.3
+# deno: explicitly use Deno >=2.3
+# node: explicitly use Node >=22; the project never installs Node
+# none: disable JS runtime; this does not mean YouTube is ready
+```
 
-Public content only. **No** DRM, paywalls, or paid content. Built for creators, research, and personal archiving.
+See [`references/install.md`](references/install.md) for details.
 
----
+## Run the downloader directly
 
-<div align="center">
+```bash
+bash scripts/fetch.sh "https://example.com/video" ./video-out
+```
 
-**If it saved you time, a ⭐ Star means a lot to an indie project.**
+Force a new artifact:
 
-MIT © [wangzan101](https://github.com/wangzan101)
+```bash
+bash scripts/fetch.sh "https://example.com/video" ./video-out --force
+```
 
-</div>
+On success, stdout contains only the final directory path. On failure, stdout is empty and diagnostics go to stderr. Exit codes:
+
+| Code | Meaning |
+|---:|---|
+| 0 | READY |
+| 2 | Invalid arguments or URL |
+| 10 | Dependency, host, or JS runtime unavailable |
+| 20 | Resolve failure, playlist, or live stream |
+| 30 | Download failure |
+| 40 | No real compatible MP4 could be produced |
+| 50 | Video, JSON, audio, or duration validation failure |
+| 60 | Lock, publish, or recovery conflict |
+
+Successful output:
+
+```text
+video-out/<extractor>-<id>/
+├── video.mp4       # parseable MP4; H.264/AAC preferred
+├── audio.wav       # PCM WAV, 16 kHz, mono
+├── info.json       # metadata matching extractor/id
+├── manifest.json   # status=ready, validation, and provenance
+└── fetch.log       # redacted diagnostics
+```
+
+Thumbnails and human subtitles are optional. Failed staging, journals, and backups live in hidden transaction directories under the output root for diagnosis/recovery and should not be passed to downstream Agents.
+
+## Use it from an Agent
+
+After installing the Skill, ask for example:
+
+- “Download this public video and validate the artifact.”
+- “Transcribe the downloaded audio with timestamps.”
+- “Extract key points from the transcript and rewrite it as a social-video script.”
+
+See [`SKILL.md`](SKILL.md) for the Skill’s operational boundaries and downstream workflow.
+
+## Tests and CI
+
+Offline tests do not access the network:
+
+```bash
+python -m pytest -q
+bash -n scripts/*.sh tests/smoke.sh
+git diff --check
+```
+
+Local integration uses real ffmpeg/ffprobe. Platform smoke is explicit and belongs in release/nightly checks:
+
+```bash
+bash tests/smoke.sh --platform youtube --url "<public-fixture-url>"
+```
+
+The repository contains no fixture URLs, cookies, or private credentials. Smoke reports store a URL hash and redacted diagnostics. A platform may be upgraded to `supported` only after two public fixtures each produce READY three consecutive times.
+
+## Boundaries and license
+
+Use only public content you are authorized to access. Do not bypass DRM, paywalls, login restrictions, or platform security controls. MIT License: [`LICENSE`](LICENSE).
