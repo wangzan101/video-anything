@@ -3,10 +3,10 @@ name: video-anything
 description: >-
   One link → everything about a video. Downloads a video from Douyin, Bilibili,
   YouTube, Kuaishou, Twitter/X (and more via yt-dlp), then extracts audio,
-  transcribes speech to text locally (Whisper, no API key), and lets the agent
-  summarize / rewrite / outline the content. Zero-config and offline: the only
-  local tools are yt-dlp + ffmpeg + Whisper; summarization is done by the agent
-  itself, so no external LLM key is needed.
+  targets a validated manifest, transcribes speech to text locally (Whisper,
+  no API key), and lets the agent summarize / rewrite / outline the content.
+  Zero-config and offline: the only local tools are yt-dlp + ffmpeg + Whisper;
+  summarization is done by the agent itself, so no external LLM key is needed.
 
   Use this when the user gives a video URL (or share link) and wants to:
   download the video / no-watermark video / audio, get the transcript / 文案 /
@@ -54,9 +54,9 @@ bash scripts/check.sh
 bash scripts/fetch.sh "<URL>" ./video-out
 ```
 
-产出一个目录 `./video-out/<platform>-<id>/`,含:`video.mp4`、`audio.wav`(16k 单声道,供 ASR)、`info.json`(标题/简介/标签/时长/作者等)、`thumbnail.*`(封面)、以及平台自带字幕 `*.vtt`(若有)。脚本会把该目录路径打印在最后一行。
+产出一个目录 `./video-out/<extractor>-<id>/`；目标 contract 包括:`video.mp4`、`audio.wav`(16k 单声道,供 ASR)、`info.json`(标题/简介/标签/时长/作者等)、`manifest.json`(目标 contract 的发布真相)、`thumbnail.*`(封面)、以及平台自带字幕 `*.vtt`(若有)。当前仍在 Phase 0 加固中，Phase4 门禁前不要把目录存在当成成功，也不要依赖“最后一行目录路径”作为稳定机器协议。
 
-> **无水印**:抖音/快手经由 yt-dlp 的官方 extractor,拿到的通常已是无水印源。平台差异、cookie、反爬见 [references/platforms.md](references/platforms.md)。
+> **无水印**:抖音/快手经由 yt-dlp 的官方或 Generic 路径，结果取决于当前 upstream 与访问条件；在 download foundation smoke 完成前不把它视为稳定承诺。平台差异、cookie、反爬见 [references/platforms.md](references/platforms.md)。
 
 ### 2. 判断要不要转录
 
@@ -68,7 +68,7 @@ bash scripts/fetch.sh "<URL>" ./video-out
 ### 3. 本地转录(Whisper,无需 key)
 
 ```bash
-python3 scripts/transcribe.py ./video-out/<platform>-<id>/audio.wav
+python3 scripts/transcribe.py ./video-out/<extractor>-<id>/audio.wav
 ```
 
 产出同目录下 `transcript.md`(带 `[mm:ss]` 时间戳)和 `transcript.txt`(纯文本)。中文默认用 `small` 模型;长视频或要更准可加 `--model medium`。参数见脚本头部注释。
@@ -136,31 +136,35 @@ python3 scripts/transcribe.py ./video-out/<platform>-<id>/audio.wav
 
 完整的输入/输出对照(同一段真实感示例 transcript → 3 种风格各一版改写)见黄金样例 [references/examples/rewrite.md](references/examples/rewrite.md),下笔前先看一眼,校准每种风格的差异度和忠于原素材的边界。
 
-## 输出目录约定
+## 输出目录约定（目标 contract）
 
 ```
-video-out/<platform>-<id>/
+video-out/<extractor>-<id>/
 ├── video.mp4          # 视频本体
 ├── audio.wav          # 16k 单声道,供 ASR
 ├── info.json          # 元数据(标题/简介/标签/作者/时长/统计)
+├── manifest.json      # 目标 contract 的校验与 provenance
 ├── thumbnail.*        # 封面
 ├── *.vtt              # 平台自带字幕(若有)
 ├── transcript.md      # ASR 文案(带时间戳)
 ├── transcript.txt     # ASR 文案(纯文本)
+├── fetch.log          # 脱敏诊断日志
 └── summary.md         # 你产出的总结/改写(按需)
 ```
 
 ## 平台支持
 
+> 以下状态是 Phase 0 临时校准,等待新的 download foundation smoke 通过后再升级。
+
 | 平台 | 状态 | 备注 |
 |------|------|------|
-| YouTube | ✅ 稳 | yt-dlp 原生 |
-| Bilibili B站 | ✅ 稳 | 海外 IP 可能需 cookie(412),见 platforms.md |
-| Twitter / X | ✅ 稳 | yt-dlp 原生 |
-| 抖音 Douyin | ✅ 可用 | 通常无水印;短链先展开 |
-| 快手 Kuaishou | ⚠️ 可用 | 偶发失效,反爬 |
-| 视频号(微信) | ⛔ 二期 | 封闭生态,yt-dlp 不支持,需客户端抓包,尽力而为 |
-| 其他 1800+ 站点 | ➕ | yt-dlp 支持即支持,直接试 |
+| YouTube | provisional | yt-dlp 原生,等待 download foundation smoke |
+| Bilibili B站 | provisional | 海外 IP 可能需 cookie(412),等待 smoke |
+| Twitter / X | provisional | yt-dlp 原生,等待 smoke |
+| 抖音 Douyin | provisional | 通常无水印;短链先展开,等待 smoke |
+| 快手 Kuaishou | experimental | 偶发失效,反爬,等待 smoke |
+| 视频号(微信) | unsupported | 封闭生态,yt-dlp 不支持,需客户端抓包,尽力而为 |
+| 其他 1800+ 站点 | experimental | yt-dlp 支持即支持,直接试 |
 
 平台专属处理(短链展开、cookie、无水印、反爬)一律见 [references/platforms.md](references/platforms.md)。
 

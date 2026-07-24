@@ -4,7 +4,7 @@
 
 ### One link → *everything* about a video.
 
-Download it, transcribe it, and let your AI rewrite it — in any agent, with **zero API keys and zero manual setup**.
+Download it, transcribe it, and let your AI rewrite it — in any agent, with **zero API keys and zero manual setup**. The download contract is still being hardened, so do not treat directory presence as success before the Phase 4 gate.
 
 **English** · [简体中文](README.md)
 
@@ -74,7 +74,7 @@ git clone https://github.com/wangzan101/video-anything ~/.claude/skills/video-an
 
 ## Use
 
-Just talk to your agent — it picks the steps:
+Just talk to your agent — it picks the steps; the download target contract lives in [`docs/superpowers/specs/2026-07-24-video-download-contract.md`](docs/superpowers/specs/2026-07-24-video-download-contract.md):
 
 - *"Download this Douyin video, no watermark"*
 - *"Turn this Bilibili video into a transcript"*
@@ -84,11 +84,13 @@ Just talk to your agent — it picks the steps:
 <summary>What runs under the hood</summary>
 
 ```bash
-bash scripts/fetch.sh "<URL>" ./video-out                 # download + assets
-python3 scripts/transcribe.py ./video-out/<dir>/audio.wav  # local transcript
+bash scripts/fetch.sh "<URL>" ./video-out                 # download + assets (the target contract will add manifest validation)
+python3 scripts/transcribe.py ./video-out/<extractor>-<id>/audio.wav  # local transcript
 # → the agent reads the transcript and writes summary.md via a playbook
 ```
 </details>
+
+`fetch.sh` targets final publication only after `video.mp4`, `audio.wav`, `info.json`, and `manifest.json` validate; before the Phase 4 gate, do not infer success from the current directory alone, and stdout should still be empty on failure.
 
 ## How it works
 
@@ -101,13 +103,15 @@ URL ─► detect platform ─► yt-dlp (video + human subs + cover + metadata)
 
 ## Platforms
 
+> These statuses are Phase 0 temporary calibration and will be upgraded after the new download-foundation smoke passes.
+
 | Platform | Status |
 |---|---|
-| YouTube · Bilibili · Twitter/X | ✅ solid |
-| Douyin | ✅ works — no-watermark |
-| Kuaishou | ⚠️ works, occasional anti-bot breakage |
-| WeChat Channels | ⛔ not yet (phase 2) |
-| 1800+ others via yt-dlp | ➕ just try it |
+| YouTube · Bilibili · Twitter/X | provisional |
+| Douyin | provisional |
+| Kuaishou | experimental |
+| WeChat Channels | unsupported |
+| 1800+ others via yt-dlp | experimental |
 
 ## Boundaries
 

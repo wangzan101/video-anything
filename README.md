@@ -4,7 +4,7 @@
 
 ### 粘一个链接 → 关于这条视频的*一切*
 
-下载、转文案、AI 改写口播稿 —— 在任意 AI 工具里，**零 API key、零手动安装、本地搞定**。
+下载、转文案、AI 改写口播稿 —— 在任意 AI 工具里，**零 API key、零手动安装、本地搞定**。下载契约正在加固中，Phase4 门禁前不要只凭目录存在判断成功。
 
 [English](README.en.md) · **简体中文**
 
@@ -74,7 +74,7 @@ git clone https://github.com/wangzan101/video-anything ~/.claude/skills/video-an
 
 ## 怎么用
 
-直接跟你的 agent 说话，它会自己挑要执行的步骤：
+直接跟你的 agent 说话，它会自己挑要执行的步骤；下载契约是目标 contract，见 [`docs/superpowers/specs/2026-07-24-video-download-contract.md`](docs/superpowers/specs/2026-07-24-video-download-contract.md)：
 
 - *"下载这个抖音视频,要无水印"*
 - *"把这个 B 站视频转成文案"*
@@ -84,11 +84,13 @@ git clone https://github.com/wangzan101/video-anything ~/.claude/skills/video-an
 <summary>底层实际跑的命令</summary>
 
 ```bash
-bash scripts/fetch.sh "<URL>" ./video-out                  # 下载 + 素材
-python3 scripts/transcribe.py ./video-out/<dir>/audio.wav   # 本地转文案
+bash scripts/fetch.sh "<URL>" ./video-out                  # 下载 + 素材（目标 contract 后续会补齐 manifest）
+python3 scripts/transcribe.py ./video-out/<extractor>-<id>/audio.wav   # 本地转文案
 # → agent 读文案,按 playbook 写出 summary.md
 ```
 </details>
+
+`fetch.sh` 的目标 contract 是在 `video.mp4`、`audio.wav`、`info.json`、`manifest.json` 都验证通过后才会发布 final；Phase4 门禁前不要仅凭当前目录判断成功，失败时 stdout 仍应为空。
 
 ## 工作原理
 
@@ -101,13 +103,15 @@ python3 scripts/transcribe.py ./video-out/<dir>/audio.wav   # 本地转文案
 
 ## 平台支持
 
+> 以下状态是 Phase 0 临时校准，等待新的 download foundation smoke 通过后再升级。
+
 | 平台 | 状态 |
 |---|---|
-| YouTube · Bilibili · Twitter/X | ✅ 稳 |
-| 抖音 Douyin | ✅ 可用 —— 无水印 |
-| 快手 Kuaishou | ⚠️ 可用，偶发反爬失效 |
-| 视频号(微信) | ⛔ 暂不支持(二期) |
-| yt-dlp 支持的 1800+ 站点 | ➕ 直接试 |
+| YouTube · Bilibili · Twitter/X | provisional |
+| 抖音 Douyin | provisional |
+| 快手 Kuaishou | experimental |
+| 视频号(微信) | unsupported |
+| yt-dlp 支持的 1800+ 站点 | experimental |
 
 ## 边界
 
